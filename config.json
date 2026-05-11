@@ -1,0 +1,9 @@
+{
+    "mode": "custom",
+    "bg": "#e8f4ff",
+    "fg": "#1a2e40",
+    "button": "#cce8ff",
+    "accent": "#4ab8ff",
+    "terminal_bg": "#f0fbff",
+    "terminal_fg": "#005577"
+}
