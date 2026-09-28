@@ -55,6 +55,7 @@ from config_manager import load_config, save_config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+APP_VERSION = "2.0.0"
 current_theme = load_config(CONFIG_PATH) or DEFAULT_THEME.copy()
 
 # try ttkbootstrap for nicer dark theme, fallback to ttk
@@ -1641,6 +1642,275 @@ class MultiFastbootCommandWindow(MultiADBCommandWindow):
             prog["value"] = 100 if ret == 0 else 0
         output_q.put("\n[Fastboot MultiCmd] All commands processed.\n")
 
+# ---------- Scrcpy GUI (visual command builder, mirip Scrcpy-GUI) ----------
+class ScrcpyGuiWindow:
+    """Pilih device + opsi scrcpy lewat GUI, preview command live, Run/Stop."""
+
+    def __init__(self, parent, term_widget, dryrun_var):
+        self.parent = parent
+        self.term = term_widget
+        self.dryrun_var = dryrun_var
+        self.procs = []
+
+        self.win = tk.Toplevel(parent)
+        self.win.title("🖥️ Scrcpy GUI — Screen Mirror")
+        self.win.geometry("720x660")
+        self.win.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # --- vars ---
+        self.device_var = tk.StringVar()
+        self.maxsize_var = tk.StringVar()
+        self.bitrate_var = tk.StringVar(value="8M")
+        self.fps_var = tk.StringVar()
+        self.title_var = tk.StringVar(value="FADB")
+        self.record_var = tk.StringVar()
+        self.ip_var = tk.StringVar()
+        self.preview_var = tk.StringVar()
+        self.status_var = tk.StringVar(value="0 berjalan")
+        self.opt_vars = {
+            "no_audio": tk.BooleanVar(value=False),
+            "fullscreen": tk.BooleanVar(value=False),
+            "always_top": tk.BooleanVar(value=False),
+            "stay_awake": tk.BooleanVar(value=True),
+            "screen_off": tk.BooleanVar(value=False),
+            "show_touches": tk.BooleanVar(value=False),
+            "no_control": tk.BooleanVar(value=False),
+            "power_off_close": tk.BooleanVar(value=False),
+        }
+
+        root = ttk.Frame(self.win, padding=10)
+        root.pack(fill=tk.BOTH, expand=True)
+
+        # Device
+        devf = ttk.LabelFrame(root, text="📱 Device", padding=8)
+        devf.pack(fill=tk.X, pady=(0, 8))
+        self.device_combo = ttk.Combobox(devf, textvariable=self.device_var, width=32)
+        self.device_combo.pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(devf, text="🔄 Refresh", command=self.refresh_devices).pack(side=tk.LEFT, padx=4)
+        ttk.Label(devf, text="boleh ketik serial manual").pack(side=tk.LEFT, padx=6)
+
+        # TCP/IP cepat
+        ipf = ttk.Frame(devf)
+        ipf.pack(side=tk.RIGHT)
+        ttk.Entry(ipf, textvariable=self.ip_var, width=16).pack(side=tk.LEFT, padx=4)
+        self.ip_var.set("192.168.1.x:5555")
+        ttk.Button(ipf, text="📶 Connect", command=self.tcp_connect).pack(side=tk.LEFT, padx=2)
+        ttk.Button(ipf, text="🔌 Disconnect", command=self.tcp_disconnect).pack(side=tk.LEFT, padx=2)
+
+        # Video
+        vidf = ttk.LabelFrame(root, text="🎞️ Video", padding=8)
+        vidf.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(vidf, text="Max size").pack(side=tk.LEFT)
+        ttk.Entry(vidf, textvariable=self.maxsize_var, width=8).pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Label(vidf, text="Bitrate").pack(side=tk.LEFT)
+        ttk.Entry(vidf, textvariable=self.bitrate_var, width=8).pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Label(vidf, text="Max FPS").pack(side=tk.LEFT)
+        ttk.Entry(vidf, textvariable=self.fps_var, width=6).pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Checkbutton(vidf, text="🔇 No audio", variable=self.opt_vars["no_audio"]).pack(side=tk.LEFT, padx=4)
+
+        # Window
+        winf = ttk.LabelFrame(root, text="🪟 Window", padding=8)
+        winf.pack(fill=tk.X, pady=(0, 8))
+        ttk.Checkbutton(winf, text="⛶ Fullscreen", variable=self.opt_vars["fullscreen"]).pack(side=tk.LEFT, padx=4)
+        ttk.Checkbutton(winf, text="📌 Always on top", variable=self.opt_vars["always_top"]).pack(side=tk.LEFT, padx=4)
+        ttk.Label(winf, text="Title").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Entry(winf, textvariable=self.title_var, width=12).pack(side=tk.LEFT, padx=4)
+
+        # Device options
+        devof = ttk.LabelFrame(root, text="⚙️ Device", padding=8)
+        devof.pack(fill=tk.X, pady=(0, 8))
+        ttk.Checkbutton(devof, text="☀ Stay awake", variable=self.opt_vars["stay_awake"]).pack(side=tk.LEFT, padx=4)
+        ttk.Checkbutton(devof, text="📴 Screen off", variable=self.opt_vars["screen_off"]).pack(side=tk.LEFT, padx=4)
+        ttk.Checkbutton(devof, text="👆 Show touches", variable=self.opt_vars["show_touches"]).pack(side=tk.LEFT, padx=4)
+        ttk.Checkbutton(devof, text="🚫 No control", variable=self.opt_vars["no_control"]).pack(side=tk.LEFT, padx=4)
+        ttk.Checkbutton(devof, text="🔌 Power off on close", variable=self.opt_vars["power_off_close"]).pack(side=tk.LEFT, padx=4)
+
+        # Record
+        recf = ttk.LabelFrame(root, text="⏺️ Record", padding=8)
+        recf.pack(fill=tk.X, pady=(0, 8))
+        ttk.Entry(recf, textvariable=self.record_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 6))
+        ttk.Button(recf, text="📂 Browse...", command=self.browse_record).pack(side=tk.LEFT)
+
+        # Preview
+        ttk.Label(root, text="👁️ Preview command:").pack(anchor="w")
+        prev = ttk.Entry(root, textvariable=self.preview_var, state="readonly")
+        prev.pack(fill=tk.X, pady=(0, 8))
+
+        # Actions
+        actf = ttk.Frame(root)
+        actf.pack(fill=tk.X)
+        ttk.Button(actf, text="▶ Run", command=self.run).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(actf, text="⏹ Stop All", command=self.stop_all).pack(side=tk.LEFT, padx=6)
+        ttk.Button(actf, text="Close", command=self.on_close).pack(side=tk.RIGHT)
+        ttk.Label(actf, textvariable=self.status_var).pack(side=tk.RIGHT, padx=10)
+
+        for v in [self.device_var, self.maxsize_var, self.bitrate_var,
+                  self.fps_var, self.title_var, self.record_var,
+                  *self.opt_vars.values()]:
+            v.trace_add("write", lambda *a: self.update_preview())
+
+        self.refresh_devices()
+        self.update_preview()
+
+    # --- device ---
+    def refresh_devices(self):
+        try:
+            res = subprocess.run([ADB, "devices"], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, timeout=5)
+            usable, other = [], []
+            for ln in (res.stdout or "").splitlines()[1:]:
+                parts = ln.split()
+                if len(parts) >= 2:
+                    (usable if parts[1] == "device" else other).append(parts[0])
+            self.device_combo["values"] = usable
+            if usable and not self.device_var.get():
+                self.device_var.set(usable[0])
+            msg = f"{len(usable)} device siap"
+            if other:
+                msg += f" ({len(other)} unauthorized/offline)"
+            self.status_var.set(msg + " • 0 berjalan")
+            self._update_running_label()
+        except Exception as e:
+            self.status_var.set(f"Gagal refresh: {e}")
+
+    def tcp_connect(self):
+        ip = self.ip_var.get().strip()
+        if not ip or ip == "192.168.1.x:5555":
+            messagebox.showinfo("TCP/IP", "Isi IP:port device dulu (mis. 192.168.1.10:5555).")
+            return
+        self._log(f"[ScrcpyGUI] adb connect {ip}")
+        threading.Thread(target=self._tcp_worker,
+                         args=(["connect", ip],), daemon=True).start()
+
+    def tcp_disconnect(self):
+        self._log("[ScrcpyGUI] adb disconnect")
+        threading.Thread(target=self._tcp_worker,
+                         args=(["disconnect"],), daemon=True).start()
+
+    def _tcp_worker(self, args):
+        try:
+            res = subprocess.run([ADB] + args, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, timeout=15)
+            self._log((res.stdout or "") + (res.stderr or ""))
+        except Exception as e:
+            self._log(f"[ScrcpyGUI] TCP error: {e}")
+        self.win.after(500, self.refresh_devices)
+
+    # --- command ---
+    def build_cmd(self):
+        cmd = ["scrcpy"]
+        serial = self.device_var.get().strip()
+        if serial:
+            cmd += ["-s", serial]
+        if self.maxsize_var.get().strip():
+            cmd += ["-m", self.maxsize_var.get().strip()]
+        if self.bitrate_var.get().strip():
+            cmd += ["-b", self.bitrate_var.get().strip()]
+        if self.fps_var.get().strip():
+            cmd += ["--max-fps", self.fps_var.get().strip()]
+        if self.opt_vars["no_audio"].get():
+            cmd += ["--no-audio"]
+        if self.opt_vars["fullscreen"].get():
+            cmd += ["-f"]
+        if self.opt_vars["always_top"].get():
+            cmd += ["--always-on-top"]
+        if self.title_var.get().strip():
+            cmd += ["--window-title", self.title_var.get().strip()]
+        if self.opt_vars["stay_awake"].get():
+            cmd += ["-w"]
+        if self.opt_vars["screen_off"].get():
+            cmd += ["-S"]
+        if self.opt_vars["show_touches"].get():
+            cmd += ["-t"]
+        if self.opt_vars["no_control"].get():
+            cmd += ["--no-control"]
+        if self.opt_vars["power_off_close"].get():
+            cmd += ["--power-off-on-close"]
+        if self.record_var.get().strip():
+            cmd += ["--record", self.record_var.get().strip()]
+        return cmd
+
+    @staticmethod
+    def fmt_cmd(argv):
+        out = []
+        for a in argv:
+            if any(c in a for c in " \t\"'"):
+                a = '"' + a.replace('"', '\\"') + '"'
+            out.append(a)
+        return " ".join(out)
+
+    def update_preview(self):
+        try:
+            self.preview_var.set(self.fmt_cmd(self.build_cmd()))
+        except Exception:
+            pass
+
+    def browse_record(self):
+        fn = filedialog.asksaveasfilename(defaultextension=".mp4",
+                                          filetypes=[("MP4", "*.mp4"), ("MKV", "*.mkv")])
+        if fn:
+            self.record_var.set(fn)
+
+    # --- run/stop ---
+    def run(self):
+        cmd = self.build_cmd()
+        self._log(f"[ScrcpyGUI] $ {self.fmt_cmd(cmd)}")
+        if self.dryrun_var.get():
+            messagebox.showinfo("Dry-Run", "Mode dry-run: command tidak dijalankan.")
+            return
+        try:
+            p = subprocess.Popen(cmd)
+            self.procs.append(p)
+            self._update_running_label()
+        except FileNotFoundError:
+            messagebox.showerror("Scrcpy not found", "Install scrcpy dan pastikan ada di PATH.")
+        except Exception as e:
+            messagebox.showerror("Scrcpy error", str(e))
+
+    def stop_all(self):
+        for p in self.procs:
+            try:
+                if p.poll() is None:
+                    p.terminate()
+                    try:
+                        p.wait(timeout=4)
+                    except Exception:
+                        try:
+                            p.kill()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        # pastikan benar-benar mati sebelum lanjut (teardown bisa lambat)
+        import time as _t
+        for _ in range(30):
+            if all(p.poll() is not None for p in self.procs):
+                break
+            _t.sleep(0.1)
+        self.procs = [p for p in self.procs if p.poll() is None]
+        self._update_running_label()
+        self._log("[ScrcpyGUI] Semua scrcpy dihentikan.")
+
+    def _update_running_label(self):
+        self.procs = [p for p in self.procs if p.poll() is None]
+        base = self.status_var.get().split("•")[0].strip()
+        self.status_var.set(f"{base} • {len(self.procs)} berjalan")
+
+    def on_close(self):
+        self.stop_all()
+        try:
+            self.win.destroy()
+        except Exception:
+            pass
+
+    def _log(self, msg):
+        try:
+            self.term.insert(tk.END, msg.rstrip() + "\n")
+            self.term.see(tk.END)
+        except Exception:
+            pass
+
+
 # ---------- ADB File Explorer ----------
 class ADBFileExplorer:
     def __init__(self, parent, term_widget, dryrun_var, root_mode=False):
@@ -2143,7 +2413,7 @@ class FaaRamadhanApp:
         else:
             self.style = None
 
-        root.title("ADB & Fastboot by Faa Ramadhan")
+        root.title(f"ADB & Fastboot by Faa Ramadhan v{APP_VERSION}")
         root.state('zoomed')
         try:
             root.minsize(1100, 700)
@@ -2166,7 +2436,7 @@ class FaaRamadhanApp:
         header = ttk.Frame(root, padding=(12, 10))
         header.pack(fill=tk.X)
         ttk.Label(header, text="🌊 ADB & Fastboot Tools", font=("Segoe UI", 14, "bold")).pack(side=tk.LEFT)
-        ttk.Label(header, text="by Faa Ramadhan  •  Light Blue Sea", font=("Segoe UI", 10)).pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(header, text="by Faa Ramadhan  •  Light Blue Sea  •  v" + APP_VERSION, font=("Segoe UI", 10)).pack(side=tk.LEFT, padx=(10, 0))
 
         # === 🧭 Main Toolbar ===
         toolbar = ttk.Frame(root, padding=6)
@@ -2443,7 +2713,7 @@ class FaaRamadhanApp:
         btn("🔬 Device Analyzer (Full)", self.open_smart_device_analyzer, row, 1)
 
         row += 1
-        btn("🖥️ Scrcpy / Mirror", self.start_scrcpy, row, 0)
+        btn("🖥️ Scrcpy GUI / Mirror", self.start_scrcpy, row, 0)
         btn("🔁 One-Click Fixer", self.open_one_click_fixer, row, 1)
 
         row += 1
@@ -2845,13 +3115,12 @@ class FaaRamadhanApp:
         cmd = [ADB, "shell", "sh", "/storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh"]
         start_cmd(cmd, self.term, dry_run=self.dryrun_var.get())
 
-    # --------- Start Scrcpy ----------
+    # --------- Scrcpy GUI ----------
     def start_scrcpy(self):
         if not shutil.which("scrcpy"):
             messagebox.showerror("Scrcpy not found", "Install scrcpy terlebih dahulu dan pastikan ada di PATH.")
             return
-        self.term.insert(tk.END, "\n[Scrcpy] Starting screen mirroring...\n")
-        start_cmd(["scrcpy"], self.term, dry_run=self.dryrun_var.get())
+        ScrcpyGuiWindow(self.root, self.term, self.dryrun_var)
 
     # ---------- ADB Shell Prompt ----------
     def adb_shell_prompt(self):
