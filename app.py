@@ -121,6 +121,78 @@ PARTITION_HINTS = {
 # ----------------------------------------
 
 # ===============================
+# COMMAND-LINE PARSING (multi-arg + quotes + device-side shell)
+# ===============================
+
+def split_cmdline(cmdline):
+    """Pecah baris perintah ala shell Windows: grouping quotes tetap jalan,
+    tapi backslash path (C:\\...) tidak dimakan seperti shlex POSIX."""
+    import shlex
+    try:
+        parts = shlex.split(cmdline, posix=False)
+    except Exception:
+        return None
+    out = []
+    for p in parts:
+        if len(p) >= 2 and p[0] == p[-1] and p[0] in ("'", '"'):
+            p = p[1:-1]
+        out.append(p)
+    return out
+
+
+def build_adb_command(cmdline):
+    """Bangun argv adb dari ketikan user (boleh pakai/tanpa prefix 'adb').
+
+    Remote command sesudah 'shell' (termasuk via -s/-d/-e) dilewatkan UTUH
+    sebagai SATU argumen agar quotes, pipe, dan su -c "..." diproses
+    device-side dengan benar. Kembalikan None kalau sintaks quotes rusak.
+    """
+    import re
+    line = (cmdline or "").strip()
+    m = re.match(r"(?i)^adb(?:\s+(.*))?$", line, re.DOTALL)
+    if m:
+        if m.group(1) is None:
+            return [ADB]
+        rest = m.group(1).strip()
+    else:
+        rest = line
+    m2 = re.match(r"(?i)^(-s\s+\S+|-d|-e)\s+shell\s+(.*)$", rest, re.DOTALL)
+    if m2:
+        sel = split_cmdline(m2.group(1))
+        if sel is None:
+            return None
+        return [ADB] + sel + ["shell", m2.group(2)]
+    m3 = re.match(r"(?i)^shell\s+(.*)$", rest, re.DOTALL)
+    if m3:
+        return [ADB, "shell", m3.group(1)]
+    if not rest:
+        return [ADB]
+    parts = split_cmdline(rest)
+    if parts is None:
+        return None
+    return [ADB] + parts
+
+
+def build_fastboot_command(cmdline):
+    """Bangun argv fastboot dari ketikan user (boleh pakai/tanpa prefix).
+    Kembalikan None kalau sintaks quotes rusak."""
+    import re
+    line = (cmdline or "").strip()
+    m = re.match(r"(?i)^fastboot(?:\s+(.*))?$", line, re.DOTALL)
+    if m:
+        if m.group(1) is None:
+            return [FASTBOOT]
+        rest = m.group(1).strip()
+    else:
+        rest = line
+    if not rest:
+        return [FASTBOOT]
+    parts = split_cmdline(rest)
+    if parts is None:
+        return None
+    return [FASTBOOT] + parts
+
+# ===============================
 # SLOT AWARE + PREFLASH SAFETY
 # ===============================
 
@@ -1532,7 +1604,11 @@ class MultiADBCommandWindow:
             cmd = r["cmd_entry"].get().strip()
             prog = r["prog"]
             if not cmd: continue
-            full_cmd = [ADB] + cmd.split()
+            argv = split_cmdline(cmd)
+            if argv is None:
+                output_q.put(f"\n[ADB MultiCmd] Baris {idx}: sintaks quotes tidak valid, dilewati.\n")
+                continue
+            full_cmd = [ADB] + argv
             output_q.put(f"\n[ADB MultiCmd] Running {idx}: {' '.join(full_cmd)}\n")
             prog.config(mode="indeterminate")
             prog.start(20)
@@ -1552,7 +1628,11 @@ class MultiFastbootCommandWindow(MultiADBCommandWindow):
             cmd = r["cmd_entry"].get().strip()
             prog = r["prog"]
             if not cmd: continue
-            full_cmd = [FASTBOOT] + cmd.split()
+            argv = split_cmdline(cmd)
+            if argv is None:
+                output_q.put(f"\n[Fastboot MultiCmd] Baris {idx}: sintaks quotes tidak valid, dilewati.\n")
+                continue
+            full_cmd = [FASTBOOT] + argv
             output_q.put(f"\n[Fastboot MultiCmd] Running {idx}: {' '.join(full_cmd)}\n")
             prog.config(mode="indeterminate")
             prog.start(20)
@@ -2782,7 +2862,9 @@ class FaaRamadhanApp:
         cmd = simpledialog.askstring("ADB Shell", "Enter shell command (e.g. pm list packages):")
         if cmd:
             try:
-                start_cmd([ADB, "shell"] + cmd.split(), self.term, dry_run=self.dryrun_var.get())
+                # seluruh perintah dikirim utuh sebagai 1 remote command
+                # agar su -c "...", quotes, dan pipe jalan device-side
+                start_cmd([ADB, "shell", cmd.strip()], self.term, dry_run=self.dryrun_var.get())
                 self.logger.success(f"Executed ADB shell command: {cmd}")
             except Exception as e:
                 self.logger.error(f"Error executing ADB shell command '{cmd}': {e}")
@@ -2862,19 +2944,10 @@ class FaaRamadhanApp:
             cmd_var.set("")
             append_output(f"$ {cmdline}")
 
-            import shlex
-            try:
-                parts = shlex.split(cmdline)
-            except Exception:
+            parts = build_adb_command(cmdline)
+            if not parts:
                 append_output("[Error] Invalid command syntax.")
                 return
-
-            if not parts:
-                return
-
-            # auto add adb if missing
-            if parts[0].lower() != "adb":
-                parts.insert(0, "adb")
 
             try:
                 proc = subprocess.Popen(
@@ -3063,7 +3136,11 @@ class FaaRamadhanApp:
             return
         args = simpledialog.askstring("Raw adb", "Enter adb args (without 'adb'):")
         if args:
-            start_cmd([ADB] + args.split(), self.term, dry_run=self.dryrun_var.get())
+            argv = split_cmdline(args)
+            if argv is None:
+                messagebox.showerror("Raw adb", "Sintaks quotes tidak valid.")
+                return
+            start_cmd([ADB] + argv, self.term, dry_run=self.dryrun_var.get())
 
     # ---------- helper to run adb commands ----------
     def _run_adb_cmd(self, cmd_list, timeout=10):
@@ -4092,18 +4169,10 @@ class FaaRamadhanApp:
             cmd_var.set("")
             append_output(f"$ {cmdline}")
 
-            import shlex
-            try:
-                parts = shlex.split(cmdline)
-            except Exception:
+            parts = build_fastboot_command(cmdline)
+            if not parts:
                 append_output("[Error] Invalid command syntax.")
                 return
-
-            if not parts:
-                return
-
-            if parts[0].lower() != "fastboot":
-                parts.insert(0, "fastboot")
 
             try:
                 proc = subprocess.Popen(
@@ -4180,7 +4249,11 @@ class FaaRamadhanApp:
             messagebox.showerror("⚠️ Fastboot Missing", "Fastboot binary not found in PATH."); return
         args = simpledialog.askstring("Raw fastboot", "Enter args (without 'fastboot'):")
         if args:
-            start_cmd([FASTBOOT] + args.split(), self.term, dry_run=self.dryrun_var.get())
+            argv = split_cmdline(args)
+            if argv is None:
+                messagebox.showerror("Raw fastboot", "Sintaks quotes tidak valid.")
+                return
+            start_cmd([FASTBOOT] + argv, self.term, dry_run=self.dryrun_var.get())
 
     # ---------- Unlock/Lock UI triggers ----------
     def attempt_unlock_prompt(self):
