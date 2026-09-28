@@ -159,7 +159,7 @@ fastboot flashing lock
 
 ---
 
-# 👨‍💻 Pembuat
+# 👨‍💻 Author
 
 ✨ Faa Ramadhan
 
