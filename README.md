@@ -1,159 +1,4 @@
-# ENG
----
-# 🚀 ADB & Fastboot Tools — by ItsFaa_ Dev
-
-🛠️ Advanced GUI-based Android utility toolkit built with Python + Tkinter for handling ADB and Fastboot operations safely and efficiently.
-
-This project combines:
-- 📱 ADB utility tools
-- ⚡ Fastboot flashing tools
-- 🔥 Multi Flash batch system
-- 🔓 Root utilities
-- 📂 File explorer
-- 🧩 Boot image toolkit
-- 🔐 Permission manager
-- 🧹 Debloat manager
-- 🛡️ Safety guard system
-- 📊 Flash simulation engine
-
----
-
-# ✨ Features
-
-## 🔧 Core Features
-
-### 📱 ADB Utilities
-- ✅ Device detection
-- 💻 ADB shell execution
-- 📜 Logcat viewer
-- 📦 Package manager
-- 🔐 Permission manager
-- 🧪 Root checker
-- ⚙️ Multi ADB commands
-- 📤📥 File push/pull system
-
-### ⚡ Fastboot Utilities
-- 🔓 Universal bootloader unlock
-- 🔒 Bootloader relock
-- 📦 Auto flash ZIP firmware
-- 🔥 Multi flash partition tool
-- 💻 Raw fastboot commands
-- 📁 Dynamic partition support
-- 🔄 A/B slot awareness
-
-### 🛡️ Advanced Flash Safety
-- 🔋 Battery safety check
-- 📂 Partition existence validation
-- 📏 Image size verification
-- 🚫 Active slot protection
-- 🧪 Dry-run flash simulation
-- 📊 Flash risk estimation
-
-### 🧩 Boot Image Toolkit
-- 📦 Boot image unpacking
-- 🪄 Magisk detection
-- 🔄 Boot repacking
-- ⚙️ `magiskboot` integration
-
-### 📂 File Management
-- 📁 ADB File Explorer
-- 🔓 Root mode file explorer
-- 📤📥 Push/Pull multiple files
-- ❌ Delete remote files
-- 🧭 Directory navigation
-
-### 🎨 GUI Features
-- 🖥️ Tkinter GUI
-- 🌙 Optional ttkbootstrap support
-- 🎨 Theme system
-- 💾 Config persistence
-- 🪟 Multi-window workflow
-- 📡 Real-time terminal output
-
----
-
-# 📥 Installation
-
-## 📌 Requirements
-- 🐍 Python 3.9+
-- ⚡ ADB & Fastboot installed in PATH
-
-## 📦 Optional Dependency
-```bash
-pip install ttkbootstrap
-```
-
-## ▶️ Run
-```bash
-python "ADB & Fastboot Tools - by ItsFaa_ Dev.py"
-```
-
----
-
-# 📁 Project Structure
-
-```text
-project/
-│
-├── ADB & Fastboot Tools - by ItsFaa_ Dev.py
-├── config_manager.py
-├── config.json
-└── README.md
-```
-
----
-
-# ⚠️ Safety Warning
-
-🔓 Unlocking bootloader or flashing partitions may:
-- 🗑️ Erase user data
-- 📄 Void warranty
-- 💀 Brick the device if used incorrectly
-
-✅ Always:
-- 💾 Backup important data
-- 🔍 Verify firmware compatibility
-- 🧪 Use dry-run mode first
-
----
-
-# ⚙️ Supported Operations
-
-## 📱 ADB
-```bash
-adb devices
-adb shell
-adb push
-adb pull
-adb reboot
-adb logcat
-```
-
-## ⚡ Fastboot
-```bash
-fastboot devices
-fastboot flash
-fastboot reboot
-fastboot flashing unlock
-fastboot flashing lock
-```
-
----
-
-# 👨‍💻 Author
-
-✨ ItsFaa_ Dev
-
----
-
-# 📜 License
-
-MIT License
-
----
-# ID
----
-# 🚀 ADB & Fastboot Tools — by ItsFaa_ Dev
+# 🚀 ADB & Fastboot Tools — by Faa Ramadhan
 
 🛠️ Toolkit utility Android berbasis GUI menggunakan Python + Tkinter untuk menangani operasi ADB dan Fastboot secara aman dan efisien.
 
@@ -217,8 +62,9 @@ Project ini menggabungkan:
 
 ### 🎨 Fitur GUI
 - 🖥️ GUI berbasis Tkinter
+- 🌊 Default theme Light Blue Sea
 - 🌙 Support ttkbootstrap
-- 🎨 Sistem tema
+- 🎨 Sistem tema (customizer + import/export JSON)
 - 💾 Penyimpanan konfigurasi
 - 🪟 Multi-window workflow
 - 📡 Output terminal realtime
@@ -227,7 +73,7 @@ Project ini menggabungkan:
 
 # 📥 Instalasi
 
-## 📌 Requirements
+## 📌 Kebutuhan
 - 🐍 Python 3.9+
 - ⚡ ADB & Fastboot sudah masuk PATH
 
@@ -236,10 +82,23 @@ Project ini menggabungkan:
 pip install ttkbootstrap
 ```
 
+## 🛣️ Tambah ke System PATH (buka dari mana saja via Win+R > `fadb`)
+1. Klik kanan `install.bat` > **Run as administrator**.
+2. Buka terminal BARU (atau tekan `Win+R`, ketik `fadb`, Enter).
+Untuk menghapus: klik kanan `uninstall.bat` > **Run as administrator**.
+Alternatif manual: tambahkan folder ini ke environment variable `Path` (System).
+
 ## ▶️ Menjalankan Program
 ```bash
-python "ADB & Fastboot Tools - by ItsFaa_ Dev.py"
+python app.py
 ```
+Tanpa jendela console:
+```bash
+pythonw app.py
+```
+Atau (setelah install PATH): tekan `Win+R`, ketik `fadb`, Enter.
+
+> `fadb.vbs` adalah launcher tanpa console (pakai `pythonw.exe`), jadi tidak ada jendela/cmd yang berkedip saat dibuka.
 
 ---
 
@@ -248,9 +107,16 @@ python "ADB & Fastboot Tools - by ItsFaa_ Dev.py"
 ```text
 project/
 │
-├── ADB & Fastboot Tools - by ItsFaa_ Dev.py
+├── app.py
+├── fadb.vbs
+├── install.bat
+├── uninstall.bat
 ├── config_manager.py
 ├── config.json
+├── Theme/
+│   ├── light_blue_sea_theme.json
+│   ├── light_blue_theme.json
+│   └── lime_theme.json
 └── README.md
 ```
 
@@ -295,10 +161,34 @@ fastboot flashing lock
 
 # 👨‍💻 Author
 
-✨ ItsFaa_ Dev
+✨ Faa Ramadhan
 
 ---
 
 # 📜 Lisensi
 
+MIT License — Copyright (c) 2026 Faa Ramadhan
+
+```text
 MIT License
+
+Copyright (c) 2026 Faa Ramadhan
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-ADB & Fastboot Tools by ItsFaa_
+ADB & Fastboot Tools by Faa Ramadhan
 Merged full edition + Multi Flash (Batch) window
 
 Requirements (recommended):
@@ -73,6 +73,26 @@ except Exception:
     tb = None
     BOOTSTRAP_AVAILABLE = False
 
+# ---------------- Anti-kedip console (Windows) ----------------
+# App jalan tanpa console via pythonw.exe / fadb.vbs. Tanpa ini, setiap
+# subprocess.run/Popen ke adb.exe & fastboot.exe (program console) akan
+# membuka jendela console baru yang langsung hilang = "kedip-kedip".
+# Berlaku global untuk proses ini saja; kode pemanggil tidak perlu diubah.
+if os.name == "nt":
+    _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    _real_run, _real_Popen = subprocess.run, subprocess.Popen
+
+    def _run_no_window(*args, **kwargs):
+        kwargs.setdefault("creationflags", _CREATE_NO_WINDOW)
+        return _real_run(*args, **kwargs)
+
+    class _Popen_no_window(_real_Popen):
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("creationflags", _CREATE_NO_WINDOW)
+            super().__init__(*args, **kwargs)
+
+    subprocess.run = _run_no_window
+    subprocess.Popen = _Popen_no_window
 # ---------------- Config ----------------
 # gunakan adb & fastboot langsung dari PATH environment
 ADB = "adb"
@@ -1983,7 +2003,7 @@ class SmartLogger:
         )
 
         # Setup logger
-        self.logger = logging.getLogger("ItsFaaLogger")
+        self.logger = logging.getLogger("FaaRamadhanLogger")
         self.logger.setLevel(logging.DEBUG)
         fh = logging.FileHandler(log_file, encoding="utf-8")
         fmt = logging.Formatter("%(asctime)s — %(levelname)s — %(message)s", "%H:%M:%S")
@@ -2030,7 +2050,7 @@ class SmartLogger:
         messagebox.showwarning("Smart Error Suggestion", f"{msg}\n\n💡 Suggestion:\n{suggestion}")
 
 # ---------- GUI App ----------
-class ItsFaa_App:
+class FaaRamadhanApp:
     def __init__(self, root):
         self.root = root
         # Modern look: pakai theme bootstrap terang kalau tersedia,
@@ -2043,7 +2063,7 @@ class ItsFaa_App:
         else:
             self.style = None
 
-        root.title("ADB & Fastboot by ItsFaa_")
+        root.title("ADB & Fastboot by Faa Ramadhan")
         root.state('zoomed')
         try:
             root.minsize(1100, 700)
@@ -2056,8 +2076,6 @@ class ItsFaa_App:
         # === Apply loaded theme ===
         theme = current_theme if current_theme else DEFAULT_THEME
         self.rgb_enabled = current_theme.get("rgb_logo", True)
-        if not self.rgb_enabled:
-            self.rgb_label.place_forget()
 
         self.root.configure(bg=theme["bg"])
 
@@ -2068,7 +2086,7 @@ class ItsFaa_App:
         header = ttk.Frame(root, padding=(12, 10))
         header.pack(fill=tk.X)
         ttk.Label(header, text="🌊 ADB & Fastboot Tools", font=("Segoe UI", 14, "bold")).pack(side=tk.LEFT)
-        ttk.Label(header, text="by ItsFaa_  •  Light Blue Sea", font=("Segoe UI", 10)).pack(side=tk.LEFT, padx=(10, 0))
+        ttk.Label(header, text="by Faa Ramadhan  •  Light Blue Sea", font=("Segoe UI", 10)).pack(side=tk.LEFT, padx=(10, 0))
 
         # === 🧭 Main Toolbar ===
         toolbar = ttk.Frame(root, padding=6)
@@ -2143,17 +2161,19 @@ class ItsFaa_App:
         self.status = ttk.Label(root, text="🛰️ Initializing...", relief=tk.SUNKEN, anchor=tk.W)
         self.status.pack(fill=tk.X, side=tk.BOTTOM)
 
-        # === Logo RGB "ItsFaa_" di tengah atas dengan efek Neon + Typing (versi slow) ===
+        # === Logo RGB "Faa Ramadhan" di tengah atas dengan efek Neon + Typing (versi slow) ===
         import itertools
 
-        self.rgb_text_full = "ItsFaa_"
+        self.rgb_text_full = "Faa Ramadhan"
         self.rgb_label = tk.Label(
             self.root,
             text="",
             font=("Segoe UI", 18, "bold"),
-            bg=self.root.cget("bg"),
+            bg=theme.get("bg", DEFAULT_THEME["bg"]),
         )
         self.rgb_label.place(relx=0.5, rely=0.02, anchor="n")
+        if not self.rgb_enabled:
+            self.rgb_label.place_forget()
 
         self.rgb_colors = [
             "#ff004c", "#ff7b00", "#ffe600", "#00ff6a",
@@ -2189,7 +2209,12 @@ class ItsFaa_App:
                         self.typing_index = 0
                         self.current_text = ""
 
-                self.rgb_label.config(text=self.current_text, fg=color)
+                self.rgb_label.config(
+                    text=self.current_text,
+                    fg=color,
+                    bg=(current_theme.get("bg", DEFAULT_THEME["bg"])
+                        if isinstance(current_theme, dict) else DEFAULT_THEME["bg"]),
+                )
                 self.root.after(250, update_label_effect)  # 250ms biar smooth
             except tk.TclError:
                 return
@@ -2548,6 +2573,12 @@ class ItsFaa_App:
             s.configure("TProgressbar", background=acc)
             s.configure("TLabelframe", background=bg, foreground=fg)
             s.configure("TLabelframe.Label", background=bg, foreground=fg)
+            # label RGB animasi ikut warna background theme
+            try:
+                if getattr(self, "rgb_label", None) is not None:
+                    self.rgb_label.configure(background=bg)
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -3273,7 +3304,7 @@ class ItsFaa_App:
     # --------- One-Click Fixer ----------
     def open_one_click_fixer(self):
         win = tk.Toplevel(self.root)
-        win.title("One-Click Fixer — Adaptive Live Monitor Edition by ItsFaa_")
+        win.title("One-Click Fixer — Adaptive Live Monitor Edition by Faa Ramadhan")
         win.geometry("520x620")
         win.minsize(480, 580)
 
@@ -3779,7 +3810,7 @@ class ItsFaa_App:
                 }
             elif name == "Sea":
                 preset = LIGHT_BLUE_SEA_THEME.copy()
-            else:  # ItsFaa default
+            else:  # Faa Ramadhan default
                 preset = DEFAULT_THEME.copy()
             for k, v in preset.items():
                 if k in entries:
@@ -3799,7 +3830,7 @@ class ItsFaa_App:
         # preview area (small sample)
         preview = tk.Frame(dev, relief=tk.SUNKEN, height=90)
         preview.pack(fill=tk.X, padx=10, pady=(10,6))
-        sample_lbl = tk.Label(preview, text="Sample text — ItsFaa Tools", anchor="w")
+        sample_lbl = tk.Label(preview, text="Sample text — Faa Ramadhan Tools", anchor="w")
         sample_lbl.pack(fill=tk.X, padx=8, pady=6)
         sample_btn = tk.Button(preview, text="Sample Button")
         sample_btn.pack(padx=8, pady=(0,8))
@@ -4377,7 +4408,7 @@ def main():
             root = tk.Tk()
     else:
         root = tk.Tk()
-    app = ItsFaa_App(root)
+    app = FaaRamadhanApp(root)
     root.mainloop()
 
 if __name__ == "__main__":
