@@ -28,7 +28,6 @@ Project ini menggabungkan:
 - 🔐 Permission manager
 - 🧪 Root checker
 - ⚙️ Multi command ADB
-- 📤📥 Sistem push/pull file
 
 ### ⚡ Utilitas Fastboot
 - 🔓 Universal bootloader unlock
