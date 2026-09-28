@@ -1,0 +1,9 @@
+{
+  "bg": "#e2f1f7",
+  "fg": "#0d2b3a",
+  "button": "#bfe3f0",
+  "accent": "#0096c7",
+  "terminal_bg": "#f3fafc",
+  "terminal_fg": "#005f73",
+  "mode": "light"
+}

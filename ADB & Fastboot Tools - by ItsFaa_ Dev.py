@@ -22,16 +22,32 @@ import datetime
 import tkinter as tk
 from tkinter import ttk, filedialog, simpledialog, messagebox, colorchooser
 
-# warna default kalau belum ada config
-DEFAULT_THEME = {
-    "bg": "#eaffea",
-    "fg": "#0a0a0a",
-    "button": "#d4ffd4",
-    "accent": "#a4ff00",
-    "terminal_bg": "#f5fff5",
-    "terminal_fg": "#227700",
+# Light Blue Sea — default theme
+LIGHT_BLUE_SEA_THEME = {
+    "bg": "#e2f1f7",
+    "fg": "#0d2b3a",
+    "button": "#bfe3f0",
+    "accent": "#0096c7",
+    "terminal_bg": "#f3fafc",
+    "terminal_fg": "#005f73",
     "mode": "light"
 }
+
+# warna default kalau belum ada config
+DEFAULT_THEME = LIGHT_BLUE_SEA_THEME.copy()
+
+
+def _darken(hex_color, factor=0.82):
+    """Gelapkan warna hex (untuk hover/active state)."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        r = max(0, min(255, int(r * factor)))
+        g = max(0, min(255, int(g * factor)))
+        b = max(0, min(255, int(b * factor)))
+        return f"#{r:02x}{g:02x}{b:02x}"
+    except Exception:
+        return hex_color
 
 # === THEME CONFIG ===
 import json
@@ -2017,9 +2033,11 @@ class SmartLogger:
 class ItsFaa_App:
     def __init__(self, root):
         self.root = root
+        # Modern look: pakai theme bootstrap terang kalau tersedia,
+        # fallback ke clam + palet custom.
         if BOOTSTRAP_AVAILABLE:
             try:
-                self.style = tb.Style(theme='darkly')
+                self.style = tb.Style()
             except Exception:
                 self.style = None
         else:
@@ -2027,6 +2045,10 @@ class ItsFaa_App:
 
         root.title("ADB & Fastboot by ItsFaa_")
         root.state('zoomed')
+        try:
+            root.minsize(1100, 700)
+        except Exception:
+            pass
 
         self.logger = SmartLogger(self)
         self.logger.info("Application started.")
@@ -2039,17 +2061,14 @@ class ItsFaa_App:
 
         self.root.configure(bg=theme["bg"])
 
-        style = ttk.Style()
-        style.theme_use("clam")
+        # Styling modern terpusat (Segoe UI + palet Light Blue Sea)
+        self._apply_modern_style(theme)
 
-        # Terapkan warna umum
-        style.configure("TFrame", background=theme["bg"])
-        style.configure("TLabel", background=theme["bg"], foreground=theme["fg"])
-        style.configure("TButton", background=theme["button"], foreground=theme["fg"])
-        style.configure("TEntry", fieldbackground=theme["bg"], foreground=theme["fg"])
-        style.configure("TNotebook", background=theme["bg"])
-        style.configure("TNotebook.Tab", background=theme["button"], foreground=theme["fg"])
-        style.map("TButton", background=[("active", theme["accent"])])
+        # === 🌊 App Header ===
+        header = ttk.Frame(root, padding=(12, 10))
+        header.pack(fill=tk.X)
+        ttk.Label(header, text="🌊 ADB & Fastboot Tools", font=("Segoe UI", 14, "bold")).pack(side=tk.LEFT)
+        ttk.Label(header, text="by ItsFaa_  •  Light Blue Sea", font=("Segoe UI", 10)).pack(side=tk.LEFT, padx=(10, 0))
 
         # === 🧭 Main Toolbar ===
         toolbar = ttk.Frame(root, padding=6)
@@ -2181,6 +2200,26 @@ class ItsFaa_App:
         self.root.after(120, self.poll_output)
         self.root.after(500, self.poll_device_state)
         self.root.after(200, self.update_progress_state)
+
+        # ttkbootstrap menimpa warna tk.Text saat idle pertama;
+        # paksa warna terminal kembali setelah itu.
+        self._fix_terminal_colors()
+
+    def _fix_terminal_colors(self):
+        """Kembalikan warna terminal custom (anti-timpa ttkbootstrap)."""
+        try:
+            self.root.update_idletasks()
+        except Exception:
+            pass
+        try:
+            theme = current_theme if current_theme else DEFAULT_THEME
+            self.term.configure(
+                bg=theme.get("terminal_bg", DEFAULT_THEME["terminal_bg"]),
+                fg=theme.get("terminal_fg", DEFAULT_THEME["terminal_fg"]),
+                insertbackground=theme.get("terminal_fg", DEFAULT_THEME["terminal_fg"]),
+            )
+        except Exception:
+            pass
 
     # ----- Two-column ADB left panel (scrollable, fixed layout) -----
     def build_left_adb(self):
@@ -2461,6 +2500,57 @@ class ItsFaa_App:
         btn("🌙 Power Off Device", lambda: self.confirm_and_run("Power Off Device", [FASTBOOT, "oem", "poweroff"]), row, 1)
 
     # ----- ensure rebuild_left exists (replace/add) -----
+    def _apply_modern_style(self, theme):
+        """Terapkan styling modern: font Segoe UI + palet theme ke semua widget ttk."""
+        bg = theme.get("bg", DEFAULT_THEME["bg"])
+        fg = theme.get("fg", DEFAULT_THEME["fg"])
+        btn = theme.get("button", DEFAULT_THEME["button"])
+        acc = theme.get("accent", DEFAULT_THEME["accent"])
+        acc_dark = _darken(acc)
+        try:
+            import tkinter.font as tkfont
+            for fname in ("TkDefaultFont", "TkTextFont", "TkHeadingFont", "TkMenuFont"):
+                try:
+                    f = tkfont.nametofont(fname)
+                    if "Segoe" not in f.cget("family"):
+                        f.configure(family="Segoe UI", size=10)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        try:
+            s = self.style or ttk.Style()
+            if self.style is None:
+                try:
+                    s.theme_use("clam")
+                except Exception:
+                    pass
+            s.configure("TFrame", background=bg)
+            s.configure("TLabel", background=bg, foreground=fg)
+            s.configure("TButton", background=btn, foreground=fg, padding=(10, 6))
+            s.configure("Accent.TButton", background=acc, foreground="#ffffff", padding=(10, 6))
+            s.map("TButton",
+                  background=[("active", acc), ("pressed", acc_dark)],
+                  foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
+            s.map("Accent.TButton",
+                  background=[("active", acc_dark), ("pressed", acc_dark)],
+                  foreground=[("active", "#ffffff")])
+            s.configure("TEntry", fieldbackground="#ffffff", foreground=fg)
+            s.configure("TCombobox", fieldbackground="#ffffff", foreground=fg)
+            s.configure("TNotebook", background=bg)
+            s.configure("TNotebook.Tab", background=btn, foreground=fg, padding=(12, 6))
+            s.map("TNotebook.Tab",
+                  background=[("selected", acc)],
+                  foreground=[("selected", "#ffffff")])
+            s.configure("Treeview", background="#ffffff", foreground=fg,
+                        fieldbackground="#ffffff", rowheight=26)
+            s.configure("Treeview.Heading", background=btn, foreground=fg)
+            s.configure("TProgressbar", background=acc)
+            s.configure("TLabelframe", background=bg, foreground=fg)
+            s.configure("TLabelframe.Label", background=bg, foreground=fg)
+        except Exception:
+            pass
+
     def rebuild_left(self):
         """Rebuild panel kiri sesuai mode (ADB atau Fastboot)"""
         # simply call the correct builder; builder will clear self.left itself
@@ -3606,8 +3696,8 @@ class ItsFaa_App:
         # helper: apply theme to whole app (live)
         def apply_theme_to_app(t):
             try:
-                # apply main bg/fg to root and ttk styles
-                self.root.configure(bg=t.get("bg", DEFAULT_THEME["bg"]))
+                # styling modern terpusat dulu, lalu warna terminal + status bar
+                self._apply_modern_style(t)
                 s = ttk.Style()
                 # try keep existing theme, just override colors
                 s.configure("TFrame", background=t.get("bg"))
@@ -3687,6 +3777,8 @@ class ItsFaa_App:
                     "bg": "#f4f4f4", "fg": "#1a1a1a", "button": "#e0e0e0",
                     "accent": "#0066cc", "terminal_bg": "#ffffff", "terminal_fg": "#006600"
                 }
+            elif name == "Sea":
+                preset = LIGHT_BLUE_SEA_THEME.copy()
             else:  # ItsFaa default
                 preset = DEFAULT_THEME.copy()
             for k, v in preset.items():
@@ -3701,6 +3793,7 @@ class ItsFaa_App:
         ttk.Label(presetf, text="🎨 Presets:").pack(side=tk.LEFT)
         ttk.Button(presetf, text="🌑 Dark", command=lambda: apply_preset("Dark")).pack(side=tk.LEFT, padx=6)
         ttk.Button(presetf, text="🌕 Light", command=lambda: apply_preset("Light")).pack(side=tk.LEFT, padx=6)
+        ttk.Button(presetf, text="🌊 Sea", command=lambda: apply_preset("Sea")).pack(side=tk.LEFT, padx=6)
         ttk.Button(presetf, text="⚙️ Default", command=lambda: apply_preset("Default")).pack(side=tk.LEFT, padx=6)
 
         # preview area (small sample)
@@ -4279,7 +4372,7 @@ class ProgressDialog:
 def main():
     if BOOTSTRAP_AVAILABLE:
         try:
-            root = tb.Window(themename='darkly')
+            root = tb.Window(themename='cosmo')
         except Exception:
             root = tk.Tk()
     else:
