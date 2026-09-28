@@ -2682,7 +2682,7 @@ class FaaRamadhanApp:
         if not content.strip():
             messagebox.showinfo("😶 Info", "No output to save, bro. Nothing to log 😅")
             return
-        save_text_to_file(content, initial=f"itsfaa_log_{timestamp()}.txt")
+        save_text_to_file(content, initial=f"fadb_log_{timestamp()}.txt")
         messagebox.showinfo("✅ Saved!", "Log file successfully saved 💾")
 
     # ---------- 🧹 Clear Logs Folder ----------
