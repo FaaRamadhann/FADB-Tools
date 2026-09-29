@@ -55,7 +55,7 @@ from config_manager import load_config, save_config
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
-APP_VERSION = "2.0.0"
+APP_VERSION = "3.0.0"
 current_theme = load_config(CONFIG_PATH) or DEFAULT_THEME.copy()
 
 # try ttkbootstrap for nicer dark theme, fallback to ttk
@@ -95,9 +95,29 @@ if os.name == "nt":
     subprocess.run = _run_no_window
     subprocess.Popen = _Popen_no_window
 # ---------------- Config ----------------
-# gunakan adb & fastboot langsung dari PATH environment
+# path tools: "auto" (dari PATH) atau path manual via Settings
 ADB = "adb"
 FASTBOOT = "fastboot"
+SCRCPY = "scrcpy"
+
+
+def resolve_tool(name, manual_path):
+    """Pakai manual path kalau file-nya valid, selain itu fallback ke nama (PATH)."""
+    if manual_path and os.path.isfile(manual_path):
+        return manual_path
+    return name
+
+
+def apply_tool_paths(cfg=None):
+    """Terapkan path tools dari config ke global. Dipanggil saat start + save Settings."""
+    global ADB, FASTBOOT, SCRCPY
+    cfg = cfg if isinstance(cfg, dict) else {}
+    ADB = resolve_tool("adb", (cfg.get("adb_path") or "").strip())
+    FASTBOOT = resolve_tool("fastboot", (cfg.get("fastboot_path") or "").strip())
+    SCRCPY = resolve_tool("scrcpy", (cfg.get("scrcpy_path") or "").strip())
+
+
+apply_tool_paths(current_theme)
 DEVICE_POLL_INTERVAL = 1500  # ms
 PRESET_DEBLOAT = [
     "com.miui.analytics",
@@ -474,6 +494,8 @@ def append_term(widget, txt):
     widget.configure(state="disabled")
 
 def is_bin_available(binname):
+    if binname and os.path.isabs(binname):
+        return os.path.isfile(binname)
     return shutil.which(binname) is not None
 
 def save_text_to_file(content, initial="log.txt"):
@@ -1798,7 +1820,7 @@ class ScrcpyGuiWindow:
 
     # --- command ---
     def build_cmd(self):
-        cmd = ["scrcpy"]
+        cmd = [SCRCPY]
         serial = self.device_var.get().strip()
         if serial:
             cmd += ["-s", serial]
@@ -2450,6 +2472,7 @@ class FaaRamadhanApp:
 
         # Right-side tools
         ttk.Button(toolbar, text="🔄 Refresh Device Now", command=self.manual_refresh).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(toolbar, text="⚙️ Settings", command=self.open_settings).pack(side=tk.RIGHT, padx=4)
         ttk.Button(toolbar, text="🚀 Start Shizuku", command=self.start_shizuku).pack(side=tk.RIGHT, padx=4)
 
         # main panes
@@ -3107,6 +3130,89 @@ class FaaRamadhanApp:
         if self.confirm_action(action_name):
             start_cmd(cmd_list, self.term, dry_run=self.dryrun_var.get())
 
+    # ---------- Settings (path adb / fastboot / scrcpy) ----------
+    def open_settings(self):
+        win = tk.Toplevel(self.root)
+        win.title("⚙️ Settings — Path Tools")
+        win.geometry("640x560")
+        win.resizable(False, False)
+
+        tools = [
+            ("adb", "ADB", "version"),
+            ("fastboot", "Fastboot", "--version"),
+            ("scrcpy", "Scrcpy", "--version"),
+        ]
+        vars_ = {}
+        frm = ttk.Frame(win, padding=12)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        def resolved_of(key, mode, manual):
+            manual = (manual or "").strip()
+            if mode == "manual" and manual and os.path.isfile(manual):
+                return manual
+            return shutil.which(key) or key
+
+        def refresh_info(key):
+            mode_v, path_v, info_v, _ = vars_[key]
+            info_v.set("Efektif: " + resolved_of(key, mode_v.get(), path_v.get()))
+
+        def browse(path_v):
+            fn = filedialog.askopenfilename(title="Pilih binary",
+                                            filetypes=[("Executable", "*.exe"), ("All files", "*.*")])
+            if fn:
+                path_v.set(fn)
+
+        def test_tool(key):
+            mode_v, path_v, info_v, verflag = vars_[key]
+            exe = resolved_of(key, mode_v.get(), path_v.get())
+            try:
+                r = subprocess.run([exe, verflag], stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, timeout=8)
+                first = (r.stdout or "").strip().splitlines()
+                info_v.set("Efektif: " + exe + "  |  " + (first[0] if first else f"exit {r.returncode}"))
+            except Exception as e:
+                info_v.set(f"Gagal jalanin {exe}: {e}")
+
+        for key, label, verflag in tools:
+            saved = (current_theme.get(key + "_path") or "").strip()
+            mode_v = tk.StringVar(value="manual" if saved else "auto")
+            path_v = tk.StringVar(value=saved)
+            info_v = tk.StringVar()
+            box = ttk.LabelFrame(frm, text=f"🔧 {label}", padding=8)
+            box.pack(fill=tk.X, pady=6)
+            ttk.Radiobutton(box, text="Otomatis (dari PATH)", variable=mode_v,
+                            value="auto", command=lambda k=key: refresh_info(k)).pack(anchor="w")
+            row = ttk.Frame(box)
+            row.pack(fill=tk.X, pady=4)
+            ttk.Radiobutton(row, text="Manual:", variable=mode_v,
+                            value="manual", command=lambda k=key: refresh_info(k)).pack(side=tk.LEFT)
+            ttk.Entry(row, textvariable=path_v, width=40).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
+            ttk.Button(row, text="📂 Browse", command=lambda v=path_v: browse(v)).pack(side=tk.LEFT, padx=(0, 4))
+            ttk.Button(row, text="🧪 Test", command=lambda k=key: test_tool(k)).pack(side=tk.LEFT)
+            ttk.Label(box, textvariable=info_v, foreground="#0077a3").pack(anchor="w")
+            path_v.trace_add("write", lambda *a, k=key: refresh_info(k))
+            vars_[key] = (mode_v, path_v, info_v, verflag)
+
+        def save_all():
+            for key, (mode_v, path_v, _iv, _vf) in vars_.items():
+                if mode_v.get() == "manual" and path_v.get().strip():
+                    current_theme[key + "_path"] = path_v.get().strip()
+                else:
+                    current_theme.pop(key + "_path", None)
+            save_config(CONFIG_PATH, current_theme)
+            apply_tool_paths(current_theme)
+            for k in vars_:
+                refresh_info(k)
+            messagebox.showinfo("Settings", "Path tools tersimpan dan langsung dipakai.")
+
+        btnf = ttk.Frame(frm)
+        btnf.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(btnf, text="💾 Save", command=save_all).pack(side=tk.LEFT)
+        ttk.Button(btnf, text="Close", command=win.destroy).pack(side=tk.RIGHT)
+
+        for k in vars_:
+            refresh_info(k)
+
     # ---------- Start Shizuku ----------
     def start_shizuku(self):
         if not is_bin_available(ADB):
@@ -3117,7 +3223,7 @@ class FaaRamadhanApp:
 
     # --------- Scrcpy GUI ----------
     def start_scrcpy(self):
-        if not shutil.which("scrcpy"):
+        if not is_bin_available(SCRCPY):
             messagebox.showerror("Scrcpy not found", "Install scrcpy terlebih dahulu dan pastikan ada di PATH.")
             return
         ScrcpyGuiWindow(self.root, self.term, self.dryrun_var)
