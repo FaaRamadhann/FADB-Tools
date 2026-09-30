@@ -5,6 +5,5 @@
     "button": "#bfe3f0",
     "accent": "#0096c7",
     "terminal_bg": "#f3fafc",
-    "terminal_fg": "#005f73",
-    "scrcpy_path": "C:/scrcpy/scrcpy.exe"
+    "terminal_fg": "#005f73"
 }
