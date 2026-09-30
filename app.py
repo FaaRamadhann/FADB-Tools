@@ -53,9 +53,16 @@ def _darken(hex_color, factor=0.82):
 import json
 from config_manager import load_config, save_config
 
+try:
+    import fcc
+    FCC_AVAILABLE = True
+except Exception:
+    fcc = None
+    FCC_AVAILABLE = False
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
-APP_VERSION = "3.0.0"
+APP_VERSION = "4.0.0"
 current_theme = load_config(CONFIG_PATH) or DEFAULT_THEME.copy()
 
 # try ttkbootstrap for nicer dark theme, fallback to ttk
@@ -1665,6 +1672,25 @@ class MultiFastbootCommandWindow(MultiADBCommandWindow):
         output_q.put("\n[Fastboot MultiCmd] All commands processed.\n")
 
 # ---------- Scrcpy GUI (visual command builder, mirip Scrcpy-GUI) ----------
+# ---------- Clipboard PC <-> HP (pakai modul fcc) ----------
+class ClipboardWindow:
+    """Window clipboard: tab PTH (PC->HP) + HTP (HP->PC) + Manual dari fcc."""
+
+    def __init__(self, parent):
+        if not FCC_AVAILABLE:
+            messagebox.showerror("Clipboard", "fcc.py tidak ditemukan di folder app.")
+            return
+        fcc.ADB = ADB  # ikut path Settings yg aktif
+        self.win = tk.Toplevel(parent)
+        self.win.title("📋 Clipboard PC ↔ HP")
+        self.win.geometry("640x680")
+        nb = ttk.Notebook(self.win)
+        nb.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
+        nb.add(fcc.PthTab(nb), text="PTH (PC → HP)")
+        nb.add(fcc.HtpTab(nb), text="HTP (HP → PC)")
+        nb.add(fcc.ManualTab(nb), text="Manual")
+
+
 class ScrcpyGuiWindow:
     """Pilih device + opsi scrcpy lewat GUI, preview command live, Run/Stop."""
 
@@ -2740,6 +2766,9 @@ class FaaRamadhanApp:
         btn("🔁 One-Click Fixer", self.open_one_click_fixer, row, 1)
 
         row += 1
+        btn("📋 Clipboard PC ↔ HP", self.open_clipboard, row, 0, colspan=2)
+
+        row += 1
         btn("🔍 Check Root Status", self.check_root_status, row, 0)
         btn("⚠️ Thermal Unlocker 🔥", self.open_thermal_unlocker, row, 1)
 
@@ -3220,6 +3249,10 @@ class FaaRamadhanApp:
             return
         cmd = [ADB, "shell", "sh", "/storage/emulated/0/Android/data/moe.shizuku.privileged.api/start.sh"]
         start_cmd(cmd, self.term, dry_run=self.dryrun_var.get())
+
+    # --------- Clipboard PC <-> HP ----------
+    def open_clipboard(self):
+        ClipboardWindow(self.root)
 
     # --------- Scrcpy GUI ----------
     def start_scrcpy(self):
