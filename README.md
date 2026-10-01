@@ -70,7 +70,7 @@ Project ini menggabungkan:
 - 🪟 Multi-window workflow
 - 📡 Output terminal realtime
 - 🖥️ Scrcpy GUI (mirror + visual command builder)
-- 📋 Clipboard PC ↔ HP (ketik otomatis + baca clipboard HP)
+- 📋 Clipboard PC ↔ HP (ketik otomatis + baca clipboard HP, source: [FCB-Magisk](https://github.com/FaaRamadhann/FCB-Magisk))
 
 ---
 

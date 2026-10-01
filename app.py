@@ -1689,6 +1689,8 @@ class ClipboardWindow:
         nb.add(fcc.PthTab(nb), text="PTH (PC → HP)")
         nb.add(fcc.HtpTab(nb), text="HTP (HP → PC)")
         nb.add(fcc.ManualTab(nb), text="Manual")
+        ttk.Label(self.win, text="Source: FCB-Magisk by Faa Ramadhan",
+                  font=("Segoe UI", 8), foreground="gray").pack(pady=(0, 4))
 
 
 class ScrcpyGuiWindow:
