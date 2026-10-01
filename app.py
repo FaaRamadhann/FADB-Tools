@@ -3847,9 +3847,6 @@ class FaaRamadhanApp:
 
         # Fixer yg punya efek samping destruktif -> wajib konfirmasi + warning
         RISKY = {
-            "💬 Fix Google Services":
-                "pm clear GMS akan LOGOUT SEMUA AKUN GOOGLE di HP!\n"
-                "Kamu harus login ulang setelahnya.",
             "🧧 Fix MIUI Services / Themes":
                 "pm clear Theme Manager bisa RESET TEMA & WALLPAPER!\n"
                 "Jangan dipakai di custom ROM non-MIUI.",
@@ -3884,8 +3881,8 @@ class FaaRamadhanApp:
                 [ADB, "shell", "pm", "clear", "com.android.vending"],
                 [ADB, "shell", "am", "force-stop", "com.android.vending"]
             ],
-            "💬 Fix Google Services": [
-                [ADB, "shell", "pm", "clear", "com.google.android.gms"],
+            "💬 Fix Google Services (aman, tanpa logout)": [
+                [ADB, "shell", "pm", "trim-caches", "1073741824"],
                 [ADB, "shell", "am", "force-stop", "com.google.android.gms"]
             ],
             "📸 Fix Camera": [
