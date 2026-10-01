@@ -526,6 +526,44 @@ def list_permissions(pkg):
             perms.append(l)
     return perms
 
+# Paket sistem yg TIDAK BOLEH di-uninstall (bootloop/brick risk)
+PROTECTED_SYSTEM_PKGS = frozenset({
+    "android",
+    "com.android.systemui",
+    "com.android.settings",
+    "com.android.phone",
+    "com.android.shell",
+    "com.android.packageinstaller",
+    "com.android.providers.settings",
+    "com.android.providers.media",
+    "com.google.android.gms",
+    "com.android.vending",
+})
+
+# prefix path -> mountpoint untuk remount rw
+_SYSTEM_MOUNTS = ("/system_ext", "/system", "/product", "/vendor", "/odm")
+
+
+def system_mountpoint(apk_path):
+    for mp in _SYSTEM_MOUNTS:
+        if apk_path == mp or apk_path.startswith(mp + "/"):
+            return mp
+    return None
+
+
+def pm_apk_paths(pkg):
+    """Path APK terinstall via `pm path`. Return list (kosong kalau tidak ada)."""
+    code, out = adb_shell(["pm", "path", pkg])
+    if code != 0:
+        return []
+    paths = []
+    for ln in out.splitlines():
+        ln = ln.strip()
+        if ln.startswith("package:"):
+            paths.append(ln[len("package:"):])
+    return paths
+
+
 def is_restricted_permission(perm):
     # common restricted perms
     restricted = (
@@ -4288,6 +4326,7 @@ class FaaRamadhanApp:
         ttk.Button(btnf, text="🔄 Refresh", command=lambda: self.pm_refresh(listbox, search_var)).pack(side=tk.LEFT)
         ttk.Button(btnf, text="🗑️ Uninstall (normal)", command=lambda: self.pm_uninstall_normal(listbox)).pack(side=tk.LEFT, padx=6)
         ttk.Button(btnf, text="👤 Uninstall (user 0)", command=lambda: self.pm_uninstall_selected(listbox)).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btnf, text="☠️ Uninstall SYSTEM (root)", command=lambda: self.pm_uninstall_system(listbox)).pack(side=tk.LEFT, padx=6)
         ttk.Button(btnf, text="🚫 Disable", command=lambda: self.pm_disable_selected(listbox)).pack(side=tk.LEFT, padx=6)
         ttk.Button(btnf, text="✅ Enable", command=lambda: self.pm_enable_selected(listbox)).pack(side=tk.LEFT, padx=6)
         ttk.Button(btnf, text="💾 Backup selected APKs", command=lambda: self.pm_backup_selected(listbox)).pack(side=tk.RIGHT)
@@ -4347,6 +4386,67 @@ class FaaRamadhanApp:
         for pkg in packages:
             start_cmd([ADB, "shell", "pm", "uninstall", pkg], self.term, dry_run=self.dryrun_var.get())
             time.sleep(0.08)
+
+
+    def pm_uninstall_system(self, listbox):
+        sel = listbox.curselection()
+        if not sel:
+            messagebox.showinfo("ℹ️ Info", "No package selected.")
+            return
+        packages = [listbox.get(i) for i in sel]
+        blocked = [p for p in packages if p in PROTECTED_SYSTEM_PKGS]
+        if blocked:
+            messagebox.showerror(
+                "🛡️ Diproteksi",
+                "Paket kritis tidak boleh dihapus:\n- " + "\n- ".join(blocked))
+            return
+        if not messagebox.askyesno(
+                "☠️ Uninstall SYSTEM (root)",
+                f"HAPUS TOTAL {len(packages)} paket sistem dari /system?\n\n"
+                "- Butuh root + remount rw\n- Salah pilih = bootloop!\n- Reboot setelah selesai\n\nLanjut?"):
+            return
+        for pkg in packages:
+            threading.Thread(target=self._uninstall_system_worker,
+                             args=(pkg, bool(self.dryrun_var.get())), daemon=True).start()
+
+    def _uninstall_system_worker(self, pkg, dry_run=False):
+        tag = "SysUninstall"
+        output_q.put(f"\n[{tag}] {pkg} ...\n")
+        if dry_run:
+            output_q.put(f"[{tag}] [DRY-RUN] dilewati.\n")
+            return
+        paths = pm_apk_paths(pkg)
+        if not paths:
+            output_q.put(f"[{tag}] {pkg} tidak terinstall / tanpa APK.\n")
+            return
+        sys_paths = [p for p in paths if system_mountpoint(p)]
+        if not sys_paths:
+            output_q.put(
+                f"[{tag}] {pkg} bukan app sistem "
+                f"({paths[0]}). Pakai Uninstall biasa.\n")
+            return
+        self._uninstall_system_paths(pkg, sys_paths, tag)
+        output_q.put(f"[{tag}] {pkg} selesai. Reboot HP agar efek penuh.\n")
+
+    def _uninstall_system_paths(self, pkg, apk_paths, tag="SysUninstall"):
+        """Hapus APK sistem via root. Return True kalau semua dir terhapus.
+        Dipisah agar bisa di-test tanpa sentuh app beneran."""
+        import os
+        dirs = sorted({os.path.dirname(p) for p in apk_paths})
+        mps = sorted({m for m in (system_mountpoint(d) for d in dirs) if m})
+        for mp in mps:
+            start_cmd([ADB, "shell", "su", "-c", f"mount -o remount,rw {mp}"], self.term)
+            time.sleep(0.5)
+        ok = True
+        for d in dirs:
+            res = subprocess.run([ADB, "shell", "su", "-c", f"rm -rf {d}"],
+                                 capture_output=True, text=True, timeout=30)
+            if res.returncode != 0:
+                ok = False
+                output_q.put(f"[{tag}] ❌ gagal hapus {d}: {(res.stderr or '').strip()}\n")
+            else:
+                output_q.put(f"[{tag}] 🗑 {d}\n")
+        return ok
 
 
     def pm_disable_selected(self, listbox):
