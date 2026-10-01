@@ -3864,15 +3864,11 @@ class FaaRamadhanApp:
                 progress.stop()
                 log("—" * 50)
 
-        # === Fixers umum ===
+        # === Fixers umum (Fix WiFi/Network punya fungsi + tombol sendiri) ===
         fixers = {
             "🧹 Fix Play Store": [
                 [ADB, "shell", "pm", "clear", "com.android.vending"],
                 [ADB, "shell", "am", "force-stop", "com.android.vending"]
-            ],
-            "📶 Fix SIM / Network": [
-                [ADB, "shell", "svc", "data", "disable"],
-                [ADB, "shell", "svc", "data", "enable"]
             ],
             "💬 Fix Google Services": [
                 [ADB, "shell", "pm", "clear", "com.google.android.gms"],
@@ -3882,18 +3878,18 @@ class FaaRamadhanApp:
                 [ADB, "shell", "pm", "clear", "com.android.camera"],
                 [ADB, "shell", "am", "force-stop", "com.android.camera"]
             ],
-            "🔊 Fix Audio / Media": [
-                [ADB, "shell", "killall", "audioserver"],
-                [ADB, "shell", "killall", "mediaserver"]
+            "🔊 Fix Audio / Media (root)": [
+                [ADB, "shell", "su", "-c", "killall audioserver"],
+                [ADB, "shell", "su", "-c", "killall mediaserver"]
             ],
             "🪫 Fix Battery Stats": [
-                [ADB, "shell", "rm", "/data/system/batterystats.bin"]
+                [ADB, "shell", "dumpsys", "batterystats", "--reset"]
             ],
             "🧭 Fix GPS / Location": [
                 [ADB, "shell", "settings", "put", "secure", "location_providers_allowed", "gps,network"]
             ],
-            "📱 Fix UI Lag / SystemUI": [
-                [ADB, "shell", "pkill", "com.android.systemui"]
+            "📱 Fix UI Lag / SystemUI (root)": [
+                [ADB, "shell", "su", "-c", "pkill -f com.android.systemui"]
             ],
         }
 
@@ -3905,9 +3901,9 @@ class FaaRamadhanApp:
                 ]
             },
             "samsung": {
-                "📲 Fix OneUI Home / System": [
+                "📲 Fix OneUI Home / System (root)": [
                     [ADB, "shell", "pm", "clear", "com.sec.android.app.launcher"],
-                    [ADB, "shell", "pkill", "com.android.systemui"]
+                    [ADB, "shell", "su", "-c", "pkill -f com.android.systemui"]
                 ]
             },
             "realme": {
@@ -3927,11 +3923,85 @@ class FaaRamadhanApp:
             },
         }
 
+        def run_wifi_fix():
+            """Fix WiFi + network bertahap: cek state -> airplane cycle ->
+            wifi off/on -> data off/on -> restart wpa_supplicant (root, opsional)
+            -> verifikasi. Tanpa root tetap jalan (langkah root best-effort)."""
+            progress.start(15)
+            log("\n▶ Fix WiFi / Network dimulai...\n", "blue")
+            win.update_idletasks()
+
+            def step(cmd, note=""):
+                if note:
+                    log(f"• {note}", "#666")
+                log(f"$ {' '.join(cmd)}", "#666")
+                win.update_idletasks()
+                try:
+                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                except Exception as e:
+                    log(f"❌ Error: {e}", "red")
+                    return ""
+                out = (proc.stdout.strip() + "\n" + proc.stderr.strip()).strip()
+                if out:
+                    log(out, "green" if proc.returncode == 0 else "red")
+                return out
+
+            def pause(s, msg):
+                log(f"⏳ {msg} ({s} dtk)...")
+                win.update_idletasks()
+                try:
+                    time.sleep(s)
+                except Exception:
+                    pass
+
+            try:
+                # 1. state awal
+                wifi_on = step([ADB, "shell", "settings", "get", "global", "wifi_on"], "State WiFi awal")
+                step([ADB, "shell", "settings", "get", "global", "airplane_mode_on"], "State airplane awal")
+                # 2. airplane cycle (tanpa root, reset semua radio)
+                step([ADB, "shell", "settings", "put", "global", "airplane_mode_on", "1"], "Airplane ON")
+                step([ADB, "shell", "am", "broadcast", "-a", "android.intent.action.AIRPLANE_MODE",
+                      "--ez", "state", "true"], "Broadcast airplane ON")
+                pause(3, "tunggu radio mati")
+                step([ADB, "shell", "settings", "put", "global", "airplane_mode_on", "0"], "Airplane OFF")
+                step([ADB, "shell", "am", "broadcast", "-a", "android.intent.action.AIRPLANE_MODE",
+                      "--ez", "state", "false"], "Broadcast airplane OFF")
+                pause(2, "tunggu radio nyala")
+                # 3. wifi off -> on
+                step([ADB, "shell", "svc", "wifi", "disable"], "WiFi OFF")
+                pause(2, "tunggu wifi mati")
+                step([ADB, "shell", "svc", "wifi", "enable"], "WiFi ON")
+                pause(3, "tunggu wifi konek")
+                # 4. data seluler off -> on (buat yg pakai SIM)
+                step([ADB, "shell", "svc", "data", "disable"], "Data OFF")
+                pause(1, "jeda")
+                step([ADB, "shell", "svc", "data", "enable"], "Data ON")
+                # 5. restart wpa_supplicant (butuh root, gagal = skip)
+                step([ADB, "shell", "su", "-c", "pkill wpa_supplicant"],
+                     "Restart wpa_supplicant (root, opsional)")
+                pause(3, "tunggu supplicant")
+                # 6. verifikasi akhir
+                wifi_end = step([ADB, "shell", "settings", "get", "global", "wifi_on"], "State WiFi akhir")
+                step([ADB, "shell", "dumpsys", "wifi", "|", "grep", "-m1", "curState"],
+                     "Status supplicant")
+                if wifi_end.strip() == "1":
+                    log("✅ Fix WiFi selesai, WiFi ON. Cek ikon WiFi di HP nyambung lagi.", "green")
+                else:
+                    log("⚠️ WiFi masih OFF, nyalakan manual di Settings HP.", "orange")
+            except Exception as e:
+                log(f"❌ Error: {e}", "red")
+            finally:
+                progress.stop()
+                log("—" * 50)
+
         # === Create Buttons ===
         for name, cmds in fixers.items():
             ttk.Button(scrollable, text=name,
                        command=lambda c=cmds, n=name: run_fix(c, f"{n} Completed!")
                        ).pack(fill="x", padx=10, pady=3)
+
+        ttk.Button(scrollable, text="📶 Fix WiFi / Network",
+                   command=run_wifi_fix).pack(fill="x", padx=10, pady=3)
 
         if brand in brand_fixers:
             ttk.Separator(scrollable, orient="horizontal").pack(fill="x", padx=10, pady=(10,4))
