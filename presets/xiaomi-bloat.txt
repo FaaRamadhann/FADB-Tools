@@ -1,0 +1,17 @@
+# Xiaomi / MIUI bloat — aman di-disable-user (reversible via Enable).
+# Fokus: analytics, iklan, telemetri, app duplikat. BUKAN app sistem inti.
+com.miui.analytics
+com.miui.msa.global
+com.miui.daemon
+com.xiaomi.mipicks
+com.xiaomi.joyose
+com.miui.hybrid
+com.miui.hybrid.accessory
+com.miui.touchassistant
+com.miui.cleanmaster
+com.miui.bugreport
+com.miui.videoplayer
+com.miui.player
+com.miui.compass
+com.miui.notes # opsional: lewati kalau kamu pakai Notes bawaan
+com.xiaomi.midrop # ShareMe, lewati kalau sering kirim file

@@ -2295,6 +2295,26 @@ class RootCheckerWindow:
         self.append_log("-" * 40)
 
 # ---------- 🧹 Debloat Preset Manager ----------
+def parse_preset_file(path):
+    """Baca preset .txt/.json -> list nama paket.
+    Komentar (# full-line maupun inline ' #...') diabaikan."""
+    with open(path, "r", encoding="utf-8") as f:
+        raw = f.read()
+    if path.lower().endswith(".json"):
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            data = data.get("packages", [])
+        items = [str(p).strip() for p in data if str(p).strip()]
+    else:
+        items = []
+        for ln in raw.splitlines():
+            ln = ln.split("#", 1)[0].strip()
+            if ln:
+                items.append(ln)
+    # buang duplikat, jaga urutan
+    return list(dict.fromkeys(items))
+
+
 class DebloatPresetWindow:
     def __init__(self, parent, term_widget, dryrun_var):
         self.term = term_widget
@@ -2315,7 +2335,17 @@ class DebloatPresetWindow:
             text="Select a preset file (.txt or .json) containing a list of packages to disable or uninstall."
         ).pack(anchor="w", pady=(0, 6))
 
-        ttk.Button(frame, text="📁 Load Preset File", command=self.load_preset_file).pack(anchor="w", pady=4)
+        preset_row = ttk.Frame(frame)
+        preset_row.pack(fill="x", pady=4)
+        self.builtin_var = tk.StringVar()
+        self.builtin_combo = ttk.Combobox(preset_row, textvariable=self.builtin_var,
+                                         state="readonly", width=30)
+        self.builtin_combo.pack(side="left", padx=(0, 6))
+        ttk.Button(preset_row, text="📥 Load Bawaan",
+                   command=self.load_builtin_preset).pack(side="left", padx=4)
+        ttk.Button(preset_row, text="📁 Load File...",
+                   command=self.load_preset_file).pack(side="left", padx=4)
+        self.refresh_builtin_list()
 
         columns = ("pkg", "status")
         self.tree = ttk.Treeview(frame, columns=columns, show="headings", height=12)
@@ -2331,6 +2361,14 @@ class DebloatPresetWindow:
         ttk.Button(btnf, text="❌ Uninstall Selected", command=lambda: self.execute_selected("uninstall")).pack(side="left", padx=4)
         ttk.Button(btnf, text="✖ Close", command=self.win.destroy).pack(side="right", padx=4)
 
+    def _builtin_presets(self):
+        d = os.path.join(BASE_DIR, "presets")
+        try:
+            return sorted(f for f in os.listdir(d)
+                          if f.lower().endswith((".txt", ".json")))
+        except Exception:
+            return []
+
     def load_preset_file(self):
         fn = filedialog.askopenfilename(
             title="📂 Select Preset File (.txt or .json)",
@@ -2338,17 +2376,27 @@ class DebloatPresetWindow:
         )
         if not fn:
             return
+        self.load_preset_path(fn)
 
-        pkgs = []
+    def refresh_builtin_list(self):
+        names = [f for f in self._builtin_presets() if f.lower() != "readme.txt"]
         try:
-            if fn.lower().endswith(".json"):
-                with open(fn, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if isinstance(data, list):
-                        pkgs = [p.strip() for p in data if p.strip()]
-            else:
-                with open(fn, "r", encoding="utf-8") as f:
-                    pkgs = [ln.strip() for ln in f.readlines() if ln.strip()]
+            self.builtin_combo["values"] = names
+            if names:
+                self.builtin_var.set(names[0])
+        except Exception:
+            pass
+
+    def load_builtin_preset(self):
+        name = self.builtin_var.get().strip()
+        if not name:
+            messagebox.showwarning("⚠️ Kosong", "Tidak ada preset bawaan.")
+            return
+        self.load_preset_path(os.path.join(BASE_DIR, "presets", name))
+
+    def load_preset_path(self, fn):
+        try:
+            pkgs = parse_preset_file(fn)
         except Exception as e:
             messagebox.showerror("❌ Error", f"Failed to read preset file:\n{e}")
             return

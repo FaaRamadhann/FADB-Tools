@@ -1,0 +1,20 @@
+# Samsung bloat — aman di-disable-user (reversible via Enable).
+# BUKAN: Find My Mobile, Galaxy Store, telepon/SMS utama.
+com.samsung.android.bixby.agent
+com.samsung.android.bixby.wakeup
+com.samsung.android.bixby.service
+com.samsung.android.app.spage
+com.samsung.android.visionintelligence
+com.samsung.android.bixbyvision.framework
+com.samsung.android.game.gamehome
+com.samsung.android.game.gametools
+com.samsung.android.messaging # SMS Samsung, lewati kalau ini SMS utama
+com.samsung.android.scloud
+com.samsung.android.da.daagent
+com.samsung.android.arzone
+com.samsung.android.aremoji
+com.samsung.android.livestickers
+com.samsung.android.stickercenter
+com.samsung.android.oneconnect
+com.sec.android.daemonapp
+com.samsung.android.app.simplesharing

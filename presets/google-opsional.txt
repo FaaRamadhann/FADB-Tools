@@ -1,0 +1,15 @@
+# Aplikasi Google opsional — aman di-disable-user (reversible).
+# JANGAN masukkan di sini: GMS, Play Store, Services Framework,
+# Find My Device, Kontak/Telepon/Dialer, Jam (alarm!), TTS.
+com.google.android.youtube
+com.google.android.apps.maps
+com.google.android.gm
+com.google.android.apps.photos
+com.google.android.apps.docs
+com.google.android.apps.tachyon
+com.google.android.calendar
+com.google.android.apps.messaging # SMS Google, lewati kalau ini SMS utama
+com.google.android.music
+com.google.android.videos
+com.google.android.apps.wallpaper # Wallpaper Google, lewati kalau dipakai
+com.google.android.googlequicksearchbox # app Google+Asisten, lewati kalau dipakai

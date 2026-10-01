@@ -1,3 +1,5 @@
 *.sh text eol=lf
 *.vbs text eol=crlf
 *.bat text eol=crlf
+presets/* export-ignore
+presets/ export-ignore
