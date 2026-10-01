@@ -3845,7 +3845,21 @@ class FaaRamadhanApp:
                 logbox.tag_config(color, foreground=color)
             logbox.see(tk.END)
 
-        def run_fix(cmds, msg="Done!"):
+        # Fixer yg punya efek samping destruktif -> wajib konfirmasi + warning
+        RISKY = {
+            "💬 Fix Google Services":
+                "pm clear GMS akan LOGOUT SEMUA AKUN GOOGLE di HP!\n"
+                "Kamu harus login ulang setelahnya.",
+            "🧧 Fix MIUI Services / Themes":
+                "pm clear Theme Manager bisa RESET TEMA & WALLPAPER!\n"
+                "Jangan dipakai di custom ROM non-MIUI.",
+        }
+
+        def run_fix(cmds, msg="Done!", warn=None):
+            if warn:
+                if not messagebox.askyesno("⚠️ Efek Samping", f"{warn}\n\nLanjut?"):
+                    log("Dibatalkan.", "orange")
+                    return
             progress.start(15)
             log(f"\n▶ Running {len(cmds)} commands...\n", "blue")
             win.update_idletasks()
@@ -3958,34 +3972,41 @@ class FaaRamadhanApp:
                 # 1. state awal
                 wifi_on = step([ADB, "shell", "settings", "get", "global", "wifi_on"], "State WiFi awal")
                 step([ADB, "shell", "settings", "get", "global", "airplane_mode_on"], "State airplane awal")
-                # 2. airplane cycle (tanpa root, reset semua radio)
-                step([ADB, "shell", "settings", "put", "global", "airplane_mode_on", "1"], "Airplane ON")
-                step([ADB, "shell", "am", "broadcast", "-a", "android.intent.action.AIRPLANE_MODE",
-                      "--ez", "state", "true"], "Broadcast airplane ON")
+                # 2. airplane cycle via cmd connectivity (tanpa root,
+                #    am broadcast AIRPLANE_MODE ditolak sistem sejak Android 12)
+                step([ADB, "shell", "cmd", "connectivity", "airplane-mode", "enable"], "Airplane ON")
                 pause(3, "tunggu radio mati")
-                step([ADB, "shell", "settings", "put", "global", "airplane_mode_on", "0"], "Airplane OFF")
-                step([ADB, "shell", "am", "broadcast", "-a", "android.intent.action.AIRPLANE_MODE",
-                      "--ez", "state", "false"], "Broadcast airplane OFF")
+                step([ADB, "shell", "cmd", "connectivity", "airplane-mode", "disable"], "Airplane OFF")
+                step([ADB, "shell", "cmd", "connectivity", "airplane-mode"], "Cek airplane")
                 pause(2, "tunggu radio nyala")
-                # 3. wifi off -> on
-                step([ADB, "shell", "svc", "wifi", "disable"], "WiFi OFF")
-                pause(2, "tunggu wifi mati")
-                step([ADB, "shell", "svc", "wifi", "enable"], "WiFi ON")
-                pause(3, "tunggu wifi konek")
-                # 4. data seluler off -> on (buat yg pakai SIM)
-                step([ADB, "shell", "svc", "data", "disable"], "Data OFF")
-                pause(1, "jeda")
-                step([ADB, "shell", "svc", "data", "enable"], "Data ON")
-                # 5. restart wpa_supplicant (butuh root, gagal = skip)
+                # 3. restart wpa_supplicant DULU (butuh root, gagal = skip),
+                #    lalu wifi off/on agar stack nyambung lagi dengan bersih
                 step([ADB, "shell", "su", "-c", "pkill wpa_supplicant"],
                      "Restart wpa_supplicant (root, opsional)")
                 pause(3, "tunggu supplicant")
-                # 6. verifikasi akhir
+                # 4. wifi off -> on
+                step([ADB, "shell", "svc", "wifi", "disable"], "WiFi OFF")
+                pause(2, "tunggu wifi mati")
+                step([ADB, "shell", "svc", "wifi", "enable"], "WiFi ON")
+                pause(5, "tunggu wifi konek")
+                # 5. data seluler off -> on (buat yg pakai SIM)
+                step([ADB, "shell", "svc", "data", "disable"], "Data OFF")
+                pause(1, "jeda")
+                step([ADB, "shell", "svc", "data", "enable"], "Data ON")
+                # 6. verifikasi akhir: wifi_on + interface wlan UP (polling,
+                #    interface bisa lambat muncul habis supplicant restart)
                 wifi_end = step([ADB, "shell", "settings", "get", "global", "wifi_on"], "State WiFi akhir")
-                step([ADB, "shell", "dumpsys", "wifi", "|", "grep", "-m1", "curState"],
-                     "Status supplicant")
-                if wifi_end.strip() == "1":
-                    log("✅ Fix WiFi selesai, WiFi ON. Cek ikon WiFi di HP nyambung lagi.", "green")
+                wlan_up = False
+                for _i in range(6):
+                    links = step([ADB, "shell", "ip", "-o", "link", "show"], "Cek interface")
+                    if any("wlan" in ln and "state UP" in ln for ln in links.splitlines()):
+                        wlan_up = True
+                        break
+                    pause(5, "tunggu interface")
+                if wifi_end.strip() == "1" and wlan_up:
+                    log("✅ Fix WiFi selesai: WiFi ON + interface UP. Cek ikon WiFi di HP nyambung lagi.", "green")
+                elif wifi_end.strip() == "1":
+                    log("⚠️ WiFi ON tapi interface belum UP, tunggu sebentar / cek manual di HP.", "orange")
                 else:
                     log("⚠️ WiFi masih OFF, nyalakan manual di Settings HP.", "orange")
             except Exception as e:
@@ -3997,8 +4018,20 @@ class FaaRamadhanApp:
         # === Create Buttons ===
         for name, cmds in fixers.items():
             ttk.Button(scrollable, text=name,
-                       command=lambda c=cmds, n=name: run_fix(c, f"{n} Completed!")
+                       command=lambda c=cmds, n=name: run_fix(c, f"{n} Completed!", RISKY.get(n))
                        ).pack(fill="x", padx=10, pady=3)
+
+        def run_fix_all():
+            risky = [n for n in fixers if n in RISKY]
+            if risky and not messagebox.askyesno(
+                    "WARNING Fix All",
+                    "Fix All menjalankan ini juga:\n- " + "\n- ".join(
+                        f"{n}: {RISKY[n].splitlines()[0]}" for n in risky) +
+                    "\n\nLanjut?"):
+                log("Fix All dibatalkan.", "orange")
+                return
+            run_fix([cmd for cmds in fixers.values() for cmd in cmds],
+                    "All basic fixes executed successfully!")
 
         ttk.Button(scrollable, text="📶 Fix WiFi / Network",
                    command=run_wifi_fix).pack(fill="x", padx=10, pady=3)
@@ -4008,14 +4041,12 @@ class FaaRamadhanApp:
             ttk.Label(scrollable, text="🏷 Brand-Specific Fixes", font=("Segoe UI", 10, "bold")).pack()
             for name, cmds in brand_fixers[brand].items():
                 ttk.Button(scrollable, text=name,
-                           command=lambda c=cmds, n=name: run_fix(c, f"{n} Completed!")
+                           command=lambda c=cmds, n=name: run_fix(c, f"{n} Completed!", RISKY.get(n))
                            ).pack(fill="x", padx=10, pady=3)
 
         ttk.Separator(scrollable, orient="horizontal").pack(fill="x", padx=10, pady=(10,6))
         ttk.Button(scrollable, text="⚡ Fix All (Recommended)", style="Accent.TButton",
-                   command=lambda: run_fix([cmd for cmds in fixers.values() for cmd in cmds],
-                                           "✅ All basic fixes executed successfully!")
-                   ).pack(fill="x", padx=10, pady=(2,8))
+                   command=run_fix_all).pack(fill="x", padx=10, pady=(2,8))
 
         ttk.Button(scrollable, text="Close", command=win.destroy).pack(pady=8)
 
