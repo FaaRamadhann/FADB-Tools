@@ -62,7 +62,7 @@ except Exception:
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
-APP_VERSION = "5.0.0"
+APP_VERSION = "5.0.1"
 current_theme = load_config(CONFIG_PATH) or DEFAULT_THEME.copy()
 
 # try ttkbootstrap for nicer dark theme, fallback to ttk
@@ -3762,7 +3762,7 @@ class FaaRamadhanApp:
 
 
     def cache_cleaner(self):
-        """Clear all app caches (requires root)"""
+        """Clear all app caches via cc.sh (requires root, data aman)"""
         if not messagebox.askyesno(
             "⚠️ Root Required",
             "This will clear all app caches (root required).\nContinue?"
@@ -3780,13 +3780,26 @@ class FaaRamadhanApp:
             messagebox.showinfo("Dry-Run", "Dry-run mode is active. Skipping execution.")
             return
 
-        self.term.insert(tk.END, "\n[Cache Cleaner] Attempting to clear caches (root)...\n")
-        cmd = [
-            ADB, "shell", "su", "-c",
-            "rm -rf /data/data/*/cache/* && rm -rf /data/cache/* && rm -rf /cache/*"
-        ]
-        start_cmd(cmd, self.term)
-        self.term.insert(tk.END, "[Cache Cleaner] ✅ Cache cleared successfully (root required).\n")
+        self.term.insert(tk.END, "\n[Cache Cleaner] Push script + cleaning (root)...\n")
+        script = os.path.join(BASE_DIR, "scripts", "cc.sh")
+        remote = "/data/local/tmp/ffadb_cc.sh"
+        if not os.path.exists(script):
+            # fallback kalau file script hilang: perintah lama
+            start_cmd([ADB, "shell", "su", "-c",
+                       "rm -rf /data/data/*/cache/* && rm -rf /data/cache/* && rm -rf /cache/*"],
+                      self.term)
+            return
+        try:
+            push = subprocess.run([ADB, "push", script, remote],
+                                  capture_output=True, text=True, timeout=60)
+            if push.returncode != 0:
+                self.term.insert(tk.END, f"[Cache Cleaner] ❌ Push gagal: {(push.stderr or '').strip()}\n")
+                return
+        except Exception as e:
+            self.term.insert(tk.END, f"[Cache Cleaner] ❌ Push error: {e}\n")
+            return
+        start_cmd([ADB, "shell", "su", "-c", f"sh {remote}"], self.term)
+        self.term.insert(tk.END, "[Cache Cleaner] ✅ Lihat hasil CLEAN COMPLETE di atas.\n")
 
     # --------- One-Click Fixer ----------
     def open_one_click_fixer(self):
