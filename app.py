@@ -62,7 +62,7 @@ except Exception:
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
-APP_VERSION = "5.0.1"
+APP_VERSION = "5.0.2"
 current_theme = load_config(CONFIG_PATH) or DEFAULT_THEME.copy()
 
 # try ttkbootstrap for nicer dark theme, fallback to ttk
@@ -421,6 +421,92 @@ def list_packages():
     if code != 0:
         return []
     return [ln.split(":")[-1].strip() for ln in out.splitlines() if ln.startswith("package:")]
+
+# Izin berbahaya (runtime/dangerous) untuk penanda ⚠️
+DANGEROUS_PERMS = frozenset({
+    "android.permission.READ_CALENDAR", "android.permission.WRITE_CALENDAR",
+    "android.permission.CAMERA",
+    "android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS",
+    "android.permission.GET_ACCOUNTS",
+    "android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION",
+    "android.permission.ACCESS_BACKGROUND_LOCATION",
+    "android.permission.RECORD_AUDIO",
+    "android.permission.READ_PHONE_STATE", "android.permission.READ_PHONE_NUMBERS",
+    "android.permission.CALL_PHONE", "android.permission.ANSWER_PHONE_CALLS",
+    "android.permission.READ_CALL_LOG", "android.permission.WRITE_CALL_LOG",
+    "android.permission.USE_SIP", "android.permission.ADD_VOICEMAIL",
+    "android.permission.BODY_SENSORS", "android.permission.BODY_SENSORS_BACKGROUND",
+    "android.permission.SEND_SMS", "android.permission.RECEIVE_SMS",
+    "android.permission.READ_SMS", "android.permission.RECEIVE_MMS",
+    "android.permission.RECEIVE_WAP_PUSH",
+    "android.permission.READ_EXTERNAL_STORAGE", "android.permission.WRITE_EXTERNAL_STORAGE",
+    "android.permission.READ_MEDIA_IMAGES", "android.permission.READ_MEDIA_VIDEO",
+    "android.permission.READ_MEDIA_AUDIO",
+    "android.permission.POST_NOTIFICATIONS",
+    "android.permission.BLUETOOTH_CONNECT", "android.permission.BLUETOOTH_SCAN",
+    "android.permission.BLUETOOTH_ADVERTISE",
+    "android.permission.NEARBY_WIFI_DEVICES",
+    "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+})
+
+def get_package_list(third_only=False):
+    """List semua paket (third_only -> flag -3). Return sorted list."""
+    args = ["pm", "list", "packages"]
+    if third_only:
+        args.append("-3")
+    code, out = adb_shell(args)
+    if code != 0:
+        return []
+    return sorted(ln.split(":")[-1].strip() for ln in out.splitlines() if ln.startswith("package:"))
+
+def get_package_permissions(pkg):
+    """Parse `dumpsys package`. Return dict:
+    {"requested": [...], "runtime": {perm: granted_bool}, "install": {perm: bool}}."""
+    import re
+    code, out = adb_shell(["dumpsys", "package", pkg])
+    res = {"requested": [], "runtime": {}, "install": {}}
+    if code != 0:
+        return res
+    section = None
+    for ln in out.splitlines():
+        s = ln.strip()
+        if s == "requested permissions:":
+            section = "requested"
+            continue
+        if s == "runtime permissions:":
+            section = "runtime"
+            continue
+        if s == "install permissions:":
+            section = "install"
+            continue
+        if not s or s.endswith(":") and " " not in s and "." not in s:
+            # ganti seksi (kecuali baris status granted)
+            if section in ("runtime", "install") and re.match(r"^[\w.]+:\s*granted=", s):
+                pass
+            else:
+                section = None
+                continue
+        if section == "requested":
+            if s and " " not in s and not s.endswith(":"):
+                res["requested"].append(s)
+        elif section in ("runtime", "install"):
+            m = re.match(r"^([\w.]+):\s*granted=(true|false)", s)
+            if m:
+                perm, ok = m.group(1), m.group(2) == "true"
+                res[section][perm] = res[section].get(perm, False) or ok
+    # dedup requested sambil jaga urutan
+    res["requested"] = list(dict.fromkeys(res["requested"]))
+    return res
+
+def permission_status(info, perm):
+    """Status tampil: granted / denied / granted (install) + flag dangerous."""
+    if perm in info["runtime"]:
+        return ("granted" if info["runtime"][perm] else "denied",
+                "berbahaya" if perm in DANGEROUS_PERMS else "-")
+    if perm in info["install"]:
+        return (("granted (install)" if info["install"][perm] else "denied"),
+                "berbahaya" if perm in DANGEROUS_PERMS else "-")
+    return ("requested", "berbahaya" if perm in DANGEROUS_PERMS else "-")
 
 def list_permissions(pkg):
     code, out = adb_shell(["dumpsys", "package", pkg])
@@ -4993,50 +5079,173 @@ class FaaRamadhanApp:
 
     # ---------- Permission Manager ----------
     def open_permission_manager_ui(self):
+        import queue as _queue
         win = tk.Toplevel(self.root)
-        win.title("Permission Manager")
-        win.geometry("520x420")
+        win.title("Permission Manager - Advanced")
+        win.geometry("900x580")
 
-        frame = ttk.Frame(win, padding=8)
-        frame.pack(fill="both", expand=True)
+        res_q = _queue.Queue()
+        cache = {"pkgs": [], "pkg": "", "perms": []}
+        status_var = tk.StringVar(value="Siap.")
 
-        pkg_list = tk.Listbox(frame)
-        pkg_list.pack(fill="both", expand=True)
+        paned = ttk.Panedwindow(win, orient=tk.HORIZONTAL)
+        paned.pack(fill=tk.BOTH, expand=True, padx=8, pady=(8, 0))
+        left = ttk.Frame(paned, padding=4)
+        right = ttk.Frame(paned, padding=4)
+        paned.add(left, weight=1)
+        paned.add(right, weight=2)
 
-        btn_frame = ttk.Frame(frame)
-        btn_frame.pack(fill="x", pady=6)
+        ttk.Label(left, text="Paket:").pack(anchor="w")
+        pkg_search = tk.StringVar()
+        ttk.Entry(left, textvariable=pkg_search).pack(fill="x", pady=4)
+        third_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(left, text="Hanya pihak ketiga",
+                        variable=third_var).pack(anchor="w")
+        pkg_list = tk.Listbox(left, selectmode=tk.SINGLE, exportselection=False)
+        pkg_list.pack(fill="both", expand=True, pady=4)
+
+        ttk.Label(right, text="Permission:").pack(anchor="w")
+        perm_search = tk.StringVar()
+        ttk.Entry(right, textvariable=perm_search).pack(fill="x", pady=4)
+        tree = ttk.Treeview(right, columns=("status", "risk"),
+                            show="tree headings", selectmode="extended")
+        tree.heading("#0", text="Permission")
+        tree.heading("status", text="Status")
+        tree.heading("risk", text="Risiko")
+        tree.column("#0", width=340)
+        tree.column("status", width=110, anchor="center")
+        tree.column("risk", width=90, anchor="center")
+        tree.tag_configure("granted", foreground="#0a7a2e")
+        tree.tag_configure("denied", foreground="#c0392b")
+        tree.tag_configure("risky", foreground="#c0392b")
+        tree.pack(fill="both", expand=True, pady=4)
+
+        btnf = ttk.Frame(right)
+        btnf.pack(fill="x", pady=4)
+        ttk.Button(btnf, text="Refresh",
+                   command=lambda: load_perms(cache["pkg"])).pack(side="left", padx=4)
+        ttk.Button(btnf, text="Grant terpilih",
+                   command=lambda: batch_perm(True)).pack(side="left", padx=4)
+        ttk.Button(btnf, text="Revoke terpilih",
+                   command=lambda: batch_perm(False)).pack(side="left", padx=4)
+
+        botf = ttk.Frame(win, padding=(8, 0, 8, 8))
+        botf.pack(fill="x")
+        ttk.Button(botf, text="Muat Paket",
+                   command=lambda: load_pkgs()).pack(side="left", padx=4)
+        ttk.Label(botf, textvariable=status_var).pack(side="left", padx=10)
+
+        def apply_pkg_filter():
+            term = pkg_search.get().lower()
+            pkg_list.delete(0, tk.END)
+            for p in cache["pkgs"]:
+                if term in p.lower():
+                    pkg_list.insert(tk.END, p)
+
+        def apply_perm_filter():
+            term = perm_search.get().lower()
+            tree.delete(*tree.get_children())
+            for name, status, risk in cache["perms"]:
+                if term and term not in name.lower():
+                    continue
+                tags = []
+                if status == "granted":
+                    tags.append("granted")
+                elif status == "denied":
+                    tags.append("denied")
+                if risk == "berbahaya":
+                    tags.append("risky")
+                tree.insert("", tk.END, text=name,
+                            values=(status, risk if risk != "-" else ""),
+                            tags=tuple(tags))
+
+        def poll():
+            try:
+                while True:
+                    kind, payload = res_q.get_nowait()
+                    if kind == "pkgs":
+                        cache["pkgs"] = payload
+                        apply_pkg_filter()
+                        status_var.set(f"{len(payload)} paket.")
+                    elif kind == "perms":
+                        pkg, perms = payload
+                        cache["pkg"] = pkg
+                        cache["perms"] = perms
+                        apply_perm_filter()
+                        status_var.set(f"{pkg}: {len(perms)} permission.")
+                    elif kind == "msg":
+                        status_var.set(payload)
+            except _queue.Empty:
+                pass
+            except Exception:
+                pass
+            try:
+                if win.winfo_exists():
+                    win.after(300, poll)
+            except Exception:
+                pass
 
         def load_pkgs():
-            pkg_list.delete(0, tk.END)
-            for p in list_packages():
-                pkg_list.insert(tk.END, p)
+            status_var.set("Memuat paket...")
+            def worker():
+                try:
+                    res_q.put(("pkgs", get_package_list(third_var.get())))
+                except Exception as e:
+                    res_q.put(("msg", f"Error: {e}"))
+            threading.Thread(target=worker, daemon=True).start()
 
-        def grant_perm():
-            pkg = pkg_list.get(tk.ACTIVE)
-            perm = simpledialog.askstring("Grant Permission", "Permission name:")
-            if not pkg or not perm:
+        def load_perms(pkg):
+            if not pkg:
                 return
-            threading.Thread(
-                target=lambda: output_q.put(grant_permission(pkg, perm)[1] + "\n"),
-                daemon=True
-            ).start()
+            status_var.set(f"Memuat {pkg}...")
+            def worker():
+                try:
+                    info = get_package_permissions(pkg)
+                    names = sorted(set(info["requested"]) | set(info["runtime"]) | set(info["install"]))
+                    perms = [(n, *permission_status(info, n)) for n in names]
+                    res_q.put(("perms", (pkg, perms)))
+                except Exception as e:
+                    res_q.put(("msg", f"Error: {e}"))
+            threading.Thread(target=worker, daemon=True).start()
 
-        def revoke_perm():
-            pkg = pkg_list.get(tk.ACTIVE)
-            perm = simpledialog.askstring("Revoke Permission", "Permission name:")
-            if not pkg or not perm:
+        def batch_perm(grant):
+            sel = tree.selection()
+            if not sel:
+                status_var.set("Pilih permission dulu.")
                 return
-            threading.Thread(
-                target=lambda: output_q.put(revoke_permission(pkg, perm)[1] + "\n"),
-                daemon=True
-            ).start()
+            names = [tree.item(i, "text") for i in sel]
+            pkg = cache["pkg"]
+            verb = "Grant" if grant else "Revoke"
+            status_var.set(f"{verb} {len(names)} permission...")
 
-        ttk.Button(btn_frame, text="🔄 Refresh", command=load_pkgs).pack(side="left", padx=4)
-        ttk.Button(btn_frame, text="✅ Grant", command=grant_perm).pack(side="left", padx=4)
-        ttk.Button(btn_frame, text="❌ Revoke", command=revoke_perm).pack(side="left", padx=4)
+            def worker():
+                ok_n = 0
+                for n in names:
+                    fn = grant_permission if grant else revoke_permission
+                    try:
+                        ok, _msg = fn(pkg, n)
+                        ok_n += 1 if ok else 0
+                    except Exception:
+                        pass
+                res_q.put(("msg", f"{verb}: {ok_n}/{len(names)} berhasil."))
+                try:
+                    info = get_package_permissions(pkg)
+                    alln = sorted(set(info["requested"]) | set(info["runtime"]) | set(info["install"]))
+                    res_q.put(("perms", (pkg, [(x, *permission_status(info, x)) for x in alln])))
+                except Exception as e:
+                    res_q.put(("msg", f"Error: {e}"))
+            threading.Thread(target=worker, daemon=True).start()
 
-        threading.Thread(target=load_pkgs, daemon=True).start()
+        def on_pkg_select(_event=None):
+            sel = pkg_list.curselection()
+            if sel:
+                load_perms(pkg_list.get(sel[0]))
 
+        pkg_list.bind("<<ListboxSelect>>", on_pkg_select)
+        pkg_search.trace_add("write", lambda *a: apply_pkg_filter())
+        perm_search.trace_add("write", lambda *a: apply_perm_filter())
+        win.after(300, poll)
+        load_pkgs()
 
 # ---------- ProgressDialog ----------
 class ProgressDialog:
