@@ -3899,9 +3899,7 @@ class FaaRamadhanApp:
             "🧭 Fix GPS / Location": [
                 [ADB, "shell", "settings", "put", "secure", "location_providers_allowed", "gps,network"]
             ],
-            "📱 Fix UI Lag / SystemUI (root)": [
-                [ADB, "shell", "su", "-c", "pkill -f com.android.systemui"]
-            ],
+            "📱 Fix UI Lag (aman, wallpaper utuh)": "uifix",
         }
 
         brand_fixers = {
@@ -4012,8 +4010,75 @@ class FaaRamadhanApp:
                 progress.stop()
                 log("—" * 50)
 
+        def run_uifix():
+            """Refresh UI tanpa hapus apa pun: restart launcher (auto-nyala
+            lagi), drop caches (root opsional), trim-caches global.
+            Wallpaper & data aman (tidak ada pm clear / kill SystemUI)."""
+            progress.start(15)
+            log("\n▶ Fix UI Lag dimulai (wallpaper aman)...\n", "blue")
+            win.update_idletasks()
+
+            def step(cmd, note=""):
+                if note:
+                    log(f"• {note}", "#666")
+                log(f"$ {' '.join(cmd)}", "#666")
+                win.update_idletasks()
+                try:
+                    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                except Exception as e:
+                    log(f"❌ Error: {e}", "red")
+                    return ""
+                out = (proc.stdout.strip() + "\n" + proc.stderr.strip()).strip()
+                if out:
+                    log(out, "green" if proc.returncode == 0 else "red")
+                return out
+
+            def pause(s, msg):
+                log(f"⏳ {msg} ({s} dtk)...")
+                win.update_idletasks()
+                try:
+                    time.sleep(s)
+                except Exception:
+                    pass
+
+            try:
+                # 1. deteksi launcher default
+                out = step([ADB, "shell", "cmd", "package", "resolve-activity", "--brief",
+                            "-a", "android.intent.action.MAIN",
+                            "-c", "android.intent.category.HOME"], "Deteksi launcher")
+                launcher = "com.android.launcher3"
+                for ln in out.splitlines():
+                    ln = ln.strip()
+                    if "/" in ln and not ln.startswith("priority"):
+                        launcher = ln.split("/")[0]
+                        break
+                log(f"Launcher: {launcher}")
+                # 2. restart launcher saja (otomatis nyala lagi, wallpaper utuh)
+                step([ADB, "shell", "am", "force-stop", launcher], "Restart launcher")
+                pause(3, "tunggu launcher nyala")
+                # 3. drop caches RAM (root, gagal = skip, tanpa hapus data)
+                step([ADB, "shell", "su", "-c", "echo 3 > /proc/sys/vm/drop_caches"],
+                     "Drop caches RAM (root, opsional)")
+                # 4. trim caches global (aman)
+                step([ADB, "shell", "pm", "trim-caches", "1073741824"], "Trim caches")
+                # 5. verifikasi launcher hidup lagi
+                pid = step([ADB, "shell", "pidof", launcher], "Cek launcher")
+                if pid.strip():
+                    log(f"✅ UI refresh selesai, launcher hidup (pid {pid.strip()}). Wallpaper utuh.", "green")
+                else:
+                    log("⚠️ Launcher belum kelihatan, tap Home sekali di HP.", "orange")
+            except Exception as e:
+                log(f"❌ Error: {e}", "red")
+            finally:
+                progress.stop()
+                log("—" * 50)
+
         # === Create Buttons ===
         for name, cmds in fixers.items():
+            if cmds == "uifix":
+                ttk.Button(scrollable, text=name,
+                           command=run_uifix).pack(fill="x", padx=10, pady=3)
+                continue
             ttk.Button(scrollable, text=name,
                        command=lambda c=cmds, n=name: run_fix(c, f"{n} Completed!", RISKY.get(n))
                        ).pack(fill="x", padx=10, pady=3)
@@ -4027,8 +4092,10 @@ class FaaRamadhanApp:
                     "\n\nLanjut?"):
                 log("Fix All dibatalkan.", "orange")
                 return
-            run_fix([cmd for cmds in fixers.values() for cmd in cmds],
+            run_fix([cmd for cmds in fixers.values() if isinstance(cmds, list) for cmd in cmds],
                     "All basic fixes executed successfully!")
+            if any(c == "uifix" for c in fixers.values()):
+                run_uifix()
 
         ttk.Button(scrollable, text="📶 Fix WiFi / Network",
                    command=run_wifi_fix).pack(fill="x", padx=10, pady=3)
