@@ -3186,10 +3186,8 @@ class FaaRamadhanApp:
         btn("🔁 One-Click Fixer", self.open_one_click_fixer, row, 1)
 
         row += 1
-        btn("📋 Clipboard PC ↔ HP", self.open_clipboard, row, 0, colspan=2)
-
-        row += 1
-        btn("⬇ Downloader (wget)", self.open_downloader, row, 0, colspan=2)
+        btn("📋 Clipboard PC ↔ HP", self.open_clipboard, row, 0)
+        btn("⬇ Downloader (wget)", self.open_downloader, row, 1)
 
         row += 1
         btn("🔍 Check Root Status", self.check_root_status, row, 0)
