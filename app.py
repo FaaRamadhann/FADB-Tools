@@ -2146,6 +2146,17 @@ def wget_available(timeout=10):
         return False
 
 
+def curl_available(timeout=10):
+    """True kalau `curl` ada di HP."""
+    try:
+        r = subprocess.run([ADB, "shell", "curl", "--version"],
+                           capture_output=True, text=True, timeout=timeout)
+        out = (r.stdout or "") + (r.stderr or "")
+        return "curl" in out.lower()
+    except Exception:
+        return False
+
+
 def wget_http_code(url, timeout=20):
     """Cek URL via wget spider. Return (ok, kode_atau_pesan)."""
     import re
@@ -2162,6 +2173,23 @@ def wget_http_code(url, timeout=20):
     return True, codes[-1]
 
 
+def curl_http_code(url, timeout=20):
+    """Cek URL via curl. Return (ok, kode_atau_pesan)."""
+    import re
+    try:
+        r = subprocess.run([ADB, "shell", "curl", "-sSL", "-o", "/dev/null",
+                            "-w", "%{http_code}", "--max-time", str(timeout), url],
+                           capture_output=True, text=True, timeout=timeout + 10)
+    except Exception as e:
+        return False, f"error: {e}"
+    m = re.search(r"(\d{3})", (r.stdout or "") + (r.stderr or ""))
+    if not m:
+        return False, "tidak dapat kode HTTP (jaringan/DNS/TLS?)"
+    if m.group(1) == "000":
+        return False, "koneksi gagal (000)"
+    return True, m.group(1)
+
+
 # ---------- Downloader (wget di HP) ----------
 class DownloaderWindow:
     """Download file langsung di HP via wget + pilih tujuan."""
@@ -2172,7 +2200,7 @@ class DownloaderWindow:
         self.proc = None
         self.stop_flag = False
         self.win = tk.Toplevel(parent)
-        self.win.title("⬇ Downloader (wget)")
+        self.win.title("⬇ Downloader (wget/curl)")
         self.win.geometry("620x480")
 
         frm = ttk.Frame(self.win, padding=10)
@@ -2191,9 +2219,14 @@ class DownloaderWindow:
         row.pack(fill="x", pady=(0, 6))
         self.dest_var = tk.StringVar()
         self.dest_combo = ttk.Combobox(row, textvariable=self.dest_var,
-                                      state="readonly", width=40)
+                                      state="readonly", width=32)
         self.dest_combo.pack(side="left", fill="x", expand=True, padx=(0, 6))
         ttk.Button(row, text="🔄 Refresh", command=self.refresh_dests).pack(side="left")
+        self.engine_var = tk.StringVar(value="wget")
+        ttk.Radiobutton(row, text="wget", variable=self.engine_var,
+                        value="wget").pack(side="left", padx=(6, 0))
+        ttk.Radiobutton(row, text="curl", variable=self.engine_var,
+                        value="curl").pack(side="left")
 
         self.logbox = tk.Text(frm, height=12, font=("Consolas", 9))
         self.logbox.pack(fill="both", expand=True, pady=(0, 6))
@@ -2203,17 +2236,25 @@ class DownloaderWindow:
         ttk.Button(btnf, text="⬇ Download", command=self.start).pack(side="left", padx=(0, 6))
         ttk.Button(btnf, text="⏹ Stop", command=self.stop).pack(side="left", padx=6)
         ttk.Button(btnf, text="Close", command=self.win.destroy).pack(side="right")
-        ttk.Label(frm, text="Syarat: modul Magisk busybox (wget) terinstall di HP.",
+        ttk.Label(frm, text="Syarat: wget (modul Magisk busybox) atau curl di HP.",
                   foreground="gray").pack(anchor="w", pady=(4, 0))
-        self.wget_var = tk.StringVar(value="mengecek wget...")
+        self.wget_var = tk.StringVar(value="mengecek wget/curl...")
         ttk.Label(frm, textvariable=self.wget_var, foreground="gray").pack(anchor="w")
 
         self.refresh_dests()
-        threading.Thread(target=self._check_wget, daemon=True).start()
+        threading.Thread(target=self._check_engine, daemon=True).start()
 
-    def _check_wget(self):
-        ok = wget_available()
-        msg = "✅ wget tersedia." if ok else "❌ wget TIDAK ada — install modul Magisk busybox dulu!"
+    def _check_engine(self):
+        w = wget_available()
+        c = curl_available()
+        if w and c:
+            msg = "✅ wget + curl tersedia."
+        elif w:
+            msg = "✅ wget tersedia, curl tidak ada."
+        elif c:
+            msg = "✅ curl tersedia, wget tidak ada."
+        else:
+            msg = "❌ wget/curl TIDAK ada — install modul Magisk busybox dulu!"
 
         def _set():
             try:
@@ -2257,7 +2298,8 @@ class DownloaderWindow:
             self.log(f"[DRY-RUN] {url} -> {dest}/{fname}")
             return
         self.stop_flag = False
-        threading.Thread(target=self._worker, args=(url, dest, fname),
+        engine = self.engine_var.get().strip() or "wget"
+        threading.Thread(target=self._worker, args=(url, dest, fname, engine),
                          daemon=True).start()
 
     def stop(self):
@@ -2272,8 +2314,11 @@ class DownloaderWindow:
     def _filename_ok(self, name):
         return bool(name) and "/" not in name and name not in (".", "..")
 
-    def _worker(self, url, dest, fname):
+    def _worker(self, url, dest, fname, engine="wget"):
         import time
+        if engine not in ("wget", "curl"):
+            engine = "wget"
+        check = wget_http_code if engine == "wget" else curl_http_code
         if not self._filename_ok(fname):
             self.log("❌ Nama berkas tidak valid.")
             return
@@ -2284,8 +2329,8 @@ class DownloaderWindow:
             if self.stop_flag:
                 self.log("Dibatalkan.")
                 return
-            self.log(f"[*] memeriksa tautan (coba {attempt}/5)...")
-            ok, code = wget_http_code(url)
+            self.log(f"[*] memeriksa tautan via {engine} (coba {attempt}/5)...")
+            ok, code = check(url)
             if not ok:
                 self.log(f"[!] {code}, tunggu 5 dtk...")
                 time.sleep(5)
@@ -2305,11 +2350,16 @@ class DownloaderWindow:
             self.log("Dibatalkan.")
             return
         remote = f"{dest}/{fname}"
-        self.log(f"[*] mengunduh ke {remote} ...")
+        self.log(f"[*] mengunduh via {engine} ke {remote} ...")
+        if engine == "curl":
+            dl_cmd = [ADB, "shell", "curl", "-sSL", "-C", "-",
+                      "--output", remote, url]
+        else:
+            dl_cmd = [ADB, "shell", "wget", "--continue",
+                      f"--output-document={remote}", url]
         try:
             self.proc = subprocess.Popen(
-                [ADB, "shell", "wget", "--continue",
-                 f"--output-document={remote}", url],
+                dl_cmd,
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 universal_newlines=True)
         except Exception as e:
