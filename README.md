@@ -1,6 +1,6 @@
 # 🚀 ADB & Fastboot Tools — by Faa Ramadhan
 
-**Versi 5.0.4 — Light Blue Sea**
+**Versi 6.0.0 — Light Blue Sea**
 
 🛠️ Toolkit utility Android berbasis GUI menggunakan Python + Tkinter untuk menangani operasi ADB dan Fastboot secara aman dan efisien.
 
@@ -71,6 +71,8 @@ Project ini menggabungkan:
 - 📡 Output terminal realtime
 - 🖥️ Scrcpy GUI (mirror + visual command builder)
 - 📋 Clipboard PC ↔ HP (ketik otomatis + baca clipboard HP, source: [FCB-Magisk](https://github.com/FaaRamadhann/FCB-Magisk))
+- 📱 Device selector (multi-device via ANDROID_SERIAL, tersimpan)
+- ⬇ Downloader wget (pilih /sdcard atau SD card, retry + cancel)
 
 ---
 

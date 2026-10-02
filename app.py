@@ -62,7 +62,7 @@ except Exception:
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
-APP_VERSION = "5.0.4"
+APP_VERSION = "6.0.0"
 current_theme = load_config(CONFIG_PATH) or DEFAULT_THEME.copy()
 
 # try ttkbootstrap for nicer dark theme, fallback to ttk
@@ -1820,6 +1820,8 @@ class ClipboardWindow:
 class ScrcpyGuiWindow:
     """Pilih device + opsi scrcpy lewat GUI, preview command live, Run/Stop."""
 
+    _instances = []
+
     def __init__(self, parent, term_widget, dryrun_var):
         self.parent = parent
         self.term = term_widget
@@ -1925,6 +1927,22 @@ class ScrcpyGuiWindow:
 
         self.refresh_devices()
         self.update_preview()
+        ScrcpyGuiWindow._instances.append(self)
+        self._poll_procs()
+
+    def _poll_procs(self):
+        """Refresh berkala: proses yg ditutup manual ikut terdeteksi mati."""
+        try:
+            if not self.win.winfo_exists():
+                return
+            self.procs = [p for p in self.procs if p.poll() is None]
+            self._update_running_label()
+        except Exception:
+            pass
+        try:
+            self.win.after(2000, self._poll_procs)
+        except Exception:
+            pass
 
     # --- device ---
     def refresh_devices(self):
@@ -2073,6 +2091,10 @@ class ScrcpyGuiWindow:
     def on_close(self):
         self.stop_all()
         try:
+            ScrcpyGuiWindow._instances.remove(self)
+        except ValueError:
+            pass
+        try:
             self.win.destroy()
         except Exception:
             pass
@@ -2085,7 +2107,219 @@ class ScrcpyGuiWindow:
             pass
 
 
+def stop_all_scrcpy():
+    """Hentikan semua scrcpy dari semua window (dipakai saat app ditutup)."""
+    for inst in list(ScrcpyGuiWindow._instances):
+        try:
+            inst.stop_all()
+        except Exception:
+            pass
+
+
 # ---------- ADB File Explorer ----------
+def list_download_dirs():
+    """Kandidat folder Download: /sdcard/Download + /storage/<vol>/Download."""
+    dirs = ["/sdcard/Download"]
+    try:
+        r = subprocess.run([ADB, "shell", "ls", "/storage"],
+                           capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            for ln in (r.stdout or "").splitlines():
+                v = ln.strip()
+                if v and v.lower() not in ("emulated", "self", "sdcard0"):
+                    d = f"/storage/{v}/Download"
+                    if d not in dirs:
+                        dirs.append(d)
+    except Exception:
+        pass
+    return dirs
+
+
+def wget_http_code(url, timeout=20):
+    """Cek URL via wget spider. Return (ok, kode_atau_pesan)."""
+    import re
+    try:
+        r = subprocess.run([ADB, "shell", "wget", "--server-response",
+                            "--spider", url],
+                           capture_output=True, text=True, timeout=timeout)
+    except Exception as e:
+        return False, f"error: {e}"
+    codes = re.findall(r"(?i)http/[\d.]*\s+(\d{3})",
+                       (r.stdout or "") + (r.stderr or ""))
+    if not codes:
+        return False, "tidak dapat kode HTTP (jaringan/DNS/TLS?)"
+    return True, codes[-1]
+
+
+# ---------- Downloader (wget di HP) ----------
+class DownloaderWindow:
+    """Download file langsung di HP via wget + pilih tujuan."""
+
+    def __init__(self, parent, term_widget, dryrun_var):
+        self.term = term_widget
+        self.dryrun_var = dryrun_var
+        self.proc = None
+        self.stop_flag = False
+        self.win = tk.Toplevel(parent)
+        self.win.title("⬇ Downloader (wget)")
+        self.win.geometry("620x480")
+
+        frm = ttk.Frame(self.win, padding=10)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(frm, text="Tautan:").pack(anchor="w")
+        self.url_var = tk.StringVar()
+        ttk.Entry(frm, textvariable=self.url_var).pack(fill="x", pady=(0, 6))
+
+        ttk.Label(frm, text="Nama berkas (kosongkan = bawaan URL):").pack(anchor="w")
+        self.file_var = tk.StringVar()
+        ttk.Entry(frm, textvariable=self.file_var).pack(fill="x", pady=(0, 6))
+
+        ttk.Label(frm, text="Simpan ke:").pack(anchor="w")
+        row = ttk.Frame(frm)
+        row.pack(fill="x", pady=(0, 6))
+        self.dest_var = tk.StringVar()
+        self.dest_combo = ttk.Combobox(row, textvariable=self.dest_var,
+                                      state="readonly", width=40)
+        self.dest_combo.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        ttk.Button(row, text="🔄 Refresh", command=self.refresh_dests).pack(side="left")
+
+        self.logbox = tk.Text(frm, height=12, font=("Consolas", 9))
+        self.logbox.pack(fill="both", expand=True, pady=(0, 6))
+
+        btnf = ttk.Frame(frm)
+        btnf.pack(fill="x")
+        ttk.Button(btnf, text="⬇ Download", command=self.start).pack(side="left", padx=(0, 6))
+        ttk.Button(btnf, text="⏹ Stop", command=self.stop).pack(side="left", padx=6)
+        ttk.Button(btnf, text="Close", command=self.win.destroy).pack(side="right")
+
+        self.refresh_dests()
+
+    def log(self, msg):
+        try:
+            self.logbox.insert(tk.END, msg.rstrip() + "\n")
+            self.logbox.see(tk.END)
+        except Exception:
+            pass
+
+    def refresh_dests(self):
+        dests = list_download_dirs()
+        self.dest_combo["values"] = dests
+        if dests and not self.dest_var.get():
+            self.dest_var.set(dests[0])
+        self.log(f"Tujuan: {', '.join(dests)}")
+
+    def start(self):
+        import threading
+        import urllib.parse
+        url = self.url_var.get().strip()
+        if not url:
+            messagebox.showwarning("Kosong", "Isi tautan dulu.")
+            return
+        dest = self.dest_var.get().strip() or "/sdcard/Download"
+        fname = self.file_var.get().strip()
+        if not fname:
+            try:
+                fname = os.path.basename(urllib.parse.urlparse(url).path) or "download.bin"
+            except Exception:
+                fname = "download.bin"
+        if self.dryrun_var.get():
+            self.log(f"[DRY-RUN] {url} -> {dest}/{fname}")
+            return
+        self.stop_flag = False
+        threading.Thread(target=self._worker, args=(url, dest, fname),
+                         daemon=True).start()
+
+    def stop(self):
+        self.stop_flag = True
+        try:
+            if self.proc and self.proc.poll() is None:
+                self.proc.terminate()
+        except Exception:
+            pass
+        self.log("⏹ Stop diminta...")
+
+    def _filename_ok(self, name):
+        return bool(name) and "/" not in name and name not in (".", "..")
+
+    def _worker(self, url, dest, fname):
+        import time
+        if not self._filename_ok(fname):
+            self.log("❌ Nama berkas tidak valid.")
+            return
+        self.log(f"$ mkdir -p {dest}")
+        subprocess.run([ADB, "shell", "mkdir", "-p", dest],
+                       capture_output=True, timeout=15)
+        for attempt in range(1, 6):
+            if self.stop_flag:
+                self.log("Dibatalkan.")
+                return
+            self.log(f"[*] memeriksa tautan (coba {attempt}/5)...")
+            ok, code = wget_http_code(url)
+            if not ok:
+                self.log(f"[!] {code}, tunggu 5 dtk...")
+                time.sleep(5)
+                continue
+            if code in ("200", "302"):
+                self.log("[v] tautan valid")
+                break
+            if code == "404":
+                self.log("[?] 404: berkas tidak ada / tautan salah.")
+                return
+            self.log(f"[!] http {code}, tunggu 5 dtk...")
+            time.sleep(5)
+        else:
+            self.log("❌ Gagal validasi setelah 5x coba.")
+            return
+        if self.stop_flag:
+            self.log("Dibatalkan.")
+            return
+        remote = f"{dest}/{fname}"
+        self.log(f"[*] mengunduh ke {remote} ...")
+        try:
+            self.proc = subprocess.Popen(
+                [ADB, "shell", "wget", "--continue",
+                 f"--output-document={remote}", url],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                universal_newlines=True)
+        except Exception as e:
+            self.log(f"❌ Gagal jalan: {e}")
+            return
+        try:
+            for line in self.proc.stdout:
+                if self.stop_flag:
+                    try:
+                        self.proc.terminate()
+                    except Exception:
+                        pass
+                    self.log("Dibatalkan.")
+                    return
+                line = line.rstrip()
+                if line:
+                    self.log(line)
+            self.proc.wait()
+        except Exception as e:
+            self.log(f"❌ Error: {e}")
+            return
+        finally:
+            self.proc = None
+        try:
+            r = subprocess.run([ADB, "shell", "stat", "-c", "%s", remote],
+                               capture_output=True, text=True, timeout=15)
+            size = int((r.stdout or "0").strip())
+        except Exception:
+            size = 0
+        if size > 0:
+            self.log(f"[v] selesai: {remote} ({size} bytes).")
+            try:
+                self.term.insert(tk.END, f"\n[Downloader] ✅ {remote} ({size} bytes)\n")
+                self.term.see(tk.END)
+            except Exception:
+                pass
+        else:
+            self.log("❌ Hasil kosong/gagal.")
+
+
 class ADBFileExplorer:
     def __init__(self, parent, term_widget, dryrun_var, root_mode=False):
         self.parent = parent
@@ -2670,6 +2904,15 @@ class FaaRamadhanApp:
         ttk.Radiobutton(toolbar, text="📱 ADB", variable=self.mode_var, value="ADB", command=self.rebuild_left).pack(side=tk.LEFT, padx=4)
         ttk.Radiobutton(toolbar, text="⚡ Fastboot", variable=self.mode_var, value="Fastboot", command=self.rebuild_left).pack(side=tk.LEFT, padx=4)
 
+        # Device selector (multi-device; kosong = otomatis pertama)
+        ttk.Label(toolbar, text="📱 Device:").pack(side=tk.LEFT, padx=(12, 2))
+        self.device_var = tk.StringVar(value="(Otomatis)")
+        self.device_combo = ttk.Combobox(toolbar, textvariable=self.device_var,
+                                         state="readonly", width=24)
+        self.device_combo.pack(side=tk.LEFT)
+        self.device_combo.bind("<<ComboboxSelected>>",
+                               lambda e: self.apply_device_selection(True))
+
         # Right-side tools
         ttk.Button(toolbar, text="🔄 Refresh Device Now", command=self.manual_refresh).pack(side=tk.RIGHT, padx=4)
         ttk.Button(toolbar, text="⚙️ Settings", command=self.open_settings).pack(side=tk.RIGHT, padx=4)
@@ -2802,6 +3045,9 @@ class FaaRamadhanApp:
         # ttkbootstrap menimpa warna tk.Text saat idle pertama;
         # paksa warna terminal kembali setelah itu.
         self._fix_terminal_colors()
+
+        # isi dropdown device + terapkan pilihan tersimpan
+        self.refresh_device_list()
 
     def _fix_terminal_colors(self):
         """Kembalikan warna terminal custom (anti-timpa ttkbootstrap)."""
@@ -2941,6 +3187,9 @@ class FaaRamadhanApp:
 
         row += 1
         btn("📋 Clipboard PC ↔ HP", self.open_clipboard, row, 0, colspan=2)
+
+        row += 1
+        btn("⬇ Downloader (wget)", self.open_downloader, row, 0, colspan=2)
 
         row += 1
         btn("🔍 Check Root Status", self.check_root_status, row, 0)
@@ -3275,9 +3524,55 @@ class FaaRamadhanApp:
         # Jalankan ulang setiap 1500 ms
         self.root.after(1500, self.poll_device_state)
 
+    def refresh_device_list(self):
+        """Isi dropdown device (state=device). Pilih tersimpan/otomatis."""
+        devs = []
+        try:
+            r = subprocess.run([ADB, "devices"], capture_output=True,
+                               text=True, timeout=5)
+            for ln in (r.stdout or "").splitlines()[1:]:
+                p = ln.split()
+                if len(p) >= 2 and p[1] == "device":
+                    devs.append(p[0])
+        except Exception:
+            pass
+        try:
+            self.device_combo["values"] = ["(Otomatis)"] + devs
+        except Exception:
+            pass
+        saved = (current_theme.get("last_device") or "")
+        if saved in devs:
+            self.device_var.set(saved)
+        elif len(devs) == 1:
+            self.device_var.set(devs[0])
+        elif self.device_var.get() not in (["(Otomatis)"] + devs):
+            self.device_var.set("(Otomatis)")
+        self.apply_device_selection(False)
+
+    def apply_device_selection(self, save=True):
+        """Terapkan pilihan ke ANDROID_SERIAL (dipakai semua command adb)."""
+        sel = self.device_var.get()
+        if sel and sel != "(Otomatis)":
+            os.environ["ANDROID_SERIAL"] = sel
+            if save:
+                current_theme["last_device"] = sel
+                save_config(CONFIG_PATH, current_theme)
+            msg = f"Device aktif: {sel}"
+        else:
+            os.environ.pop("ANDROID_SERIAL", None)
+            if save:
+                current_theme.pop("last_device", None)
+                save_config(CONFIG_PATH, current_theme)
+            msg = "Device otomatis (pertama)"
+        try:
+            self.logger.info(f"📱 {msg}")
+        except Exception:
+            pass
+
     def manual_refresh(self):
         mode, info = detect_device_state()
         self.status.config(text=(f"{mode}: {info}"))
+        self.refresh_device_list()
 
     # ---------- Smart Error Popup ----------
     def show_smart_error(self, title, message):
@@ -3427,6 +3722,10 @@ class FaaRamadhanApp:
     # --------- Clipboard PC <-> HP ----------
     def open_clipboard(self):
         ClipboardWindow(self.root)
+
+    # --------- Downloader (wget) ----------
+    def open_downloader(self):
+        DownloaderWindow(self.root, self.term, self.dryrun_var)
 
     # --------- Scrcpy GUI ----------
     def start_scrcpy(self):
@@ -5427,6 +5726,21 @@ def main():
     else:
         root = tk.Tk()
     app = FaaRamadhanApp(root)
+
+    def _on_app_close():
+        try:
+            stop_all_scrcpy()
+        except Exception:
+            pass
+        try:
+            root.destroy()
+        except Exception:
+            pass
+
+    try:
+        root.protocol("WM_DELETE_WINDOW", _on_app_close)
+    except Exception:
+        pass
     root.mainloop()
 
 if __name__ == "__main__":
