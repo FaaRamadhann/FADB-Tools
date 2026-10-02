@@ -2135,6 +2135,17 @@ def list_download_dirs():
     return dirs
 
 
+def wget_available(timeout=10):
+    """True kalau `wget` ada di HP (biasanya dari modul Magisk busybox)."""
+    try:
+        r = subprocess.run([ADB, "shell", "wget", "--help"],
+                           capture_output=True, text=True, timeout=timeout)
+        out = (r.stdout or "") + (r.stderr or "")
+        return "wget" in out.lower()
+    except Exception:
+        return False
+
+
 def wget_http_code(url, timeout=20):
     """Cek URL via wget spider. Return (ok, kode_atau_pesan)."""
     import re
@@ -2192,8 +2203,27 @@ class DownloaderWindow:
         ttk.Button(btnf, text="⬇ Download", command=self.start).pack(side="left", padx=(0, 6))
         ttk.Button(btnf, text="⏹ Stop", command=self.stop).pack(side="left", padx=6)
         ttk.Button(btnf, text="Close", command=self.win.destroy).pack(side="right")
+        ttk.Label(frm, text="Syarat: modul Magisk busybox (wget) terinstall di HP.",
+                  foreground="gray").pack(anchor="w", pady=(4, 0))
+        self.wget_var = tk.StringVar(value="mengecek wget...")
+        ttk.Label(frm, textvariable=self.wget_var, foreground="gray").pack(anchor="w")
 
         self.refresh_dests()
+        threading.Thread(target=self._check_wget, daemon=True).start()
+
+    def _check_wget(self):
+        ok = wget_available()
+        msg = "✅ wget tersedia." if ok else "❌ wget TIDAK ada — install modul Magisk busybox dulu!"
+
+        def _set():
+            try:
+                self.wget_var.set(msg)
+            except Exception:
+                pass
+        try:
+            self.win.after(0, _set)
+        except Exception:
+            pass
 
     def log(self, msg):
         try:
